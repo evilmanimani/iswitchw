@@ -14,7 +14,7 @@ Built and tested using AutoHotkeyL v1.1.33.02 on Windows 10 (x64).
 
 iswitchw strives to be as intuitive as possible.
 
-* `Capslock` activates iswitchw
+* `Win+Space` activates iswitchw
 * `Esc` cancels at any time
 * `Tab/Shift + Tab` `Down/Up` `Ctrl + J/K` navigate next/previous row
 * `Left/Right` arrow keys move the insert cursor in the search box
