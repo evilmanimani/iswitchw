@@ -45,7 +45,7 @@ Global hideScrollBars := true
 ;   * - for srch    
 ;   < - for simularity
 ; recommended '*' for fast fuzzy searching; you can set one of the other search modes as default here instead if destired
-DefaultTCSearch := "*" 
+DefaultTCSearch := "<" 
 
 ; Activate the window if it's the only match
 activateOnlyMatch := false
@@ -156,7 +156,7 @@ Loop 300 {
 
 chromeTabObj := Object(), vivaldiTabObj := Object()
 Gosub, RefreshTimer
-SetTimer, RefreshTimer, 3000
+SetTimer, RefreshTimer, 5000
 Settimer, CheckIfVisible, 20
 
 Return
@@ -676,8 +676,9 @@ return
 chromiumGetTabNames(debugPort) {
   try {
     whr := ComObjCreate("WinHttp.WinHttpRequest.5.1")
-    whr.Open("GET", "http://127.0.0.1:" debugPort "/json/list")
+    whr.Open("GET", "http://127.0.0.1:" debugPort "/json/list", true)
     whr.Send()
+    whr.WaitForResponse()
     v := whr.ResponseText
     obj := JSON.Load(v)
     filtered := []
@@ -695,8 +696,9 @@ chromiumGetTabNames(debugPort) {
 chromiumFocusTab(debugPort, title, id) {
   try {
     whr := ComObjCreate("WinHttp.WinHttpRequest.5.1")
-    whr.Open("GET", "http://127.0.0.1:" debugPort "/json/activate/" id)
+    whr.Open("GET", "http://127.0.0.1:" debugPort "/json/activate/" id, true)
     whr.Send()
+    whr.WaitForResponse()
     WinWait, % title, , 2
     WinActivate
     ControlFocus, ahk_class Chrome_WidgetWin_1
