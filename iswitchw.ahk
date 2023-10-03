@@ -45,7 +45,7 @@ Global hideScrollBars := true
 ;   * - for srch    
 ;   < - for simularity
 ; recommended '*' for fast fuzzy searching; you can set one of the other search modes as default here instead if destired
-DefaultTCSearch := "<" 
+DefaultTCSearch := "*" 
 
 ; Activate the window if it's the only match
 activateOnlyMatch := false
@@ -93,7 +93,7 @@ vivaldiDebugPort := 5000
 ;
 ;----------------------------------------------------------------------
 
-global vivaldiTabObj, chromeTabObj, switcher_id, hlv
+global browserTabObj, switcher_id, hlv
 
 #SingleInstance force
 #WinActivateForce
@@ -108,9 +108,9 @@ OnExit("Quit")
 ; Load saved position from settings.ini
 IniRead, gui_pos, settings.ini, position, gui_pos, 0
 
-; OnMessage(0x20, "WM_SETCURSOR")
-; OnMessage(0x200, "WM_MOUSEMOVE")
-; OnMessage(0x201, "WM_LBUTTONDOWN")
+OnMessage(0x20, "WM_SETCURSOR")
+OnMessage(0x200, "WM_MOUSEMOVE")
+OnMessage(0x201, "WM_LBUTTONDOWN")
 
 fileList := []
 if IsObject(shortcutFolders) {
@@ -128,8 +128,8 @@ Gui, Margin, 8, 10
 Gui, Font, s14 cEEE8D5, Segoe MDL2 Assets
 Gui, Add, Text, xm+5 ym+3, % Chr(0xE721)
 Gui, Font, s10 cEEE8D5, Segoe UI
-Gui, Add, Edit, w420 h25 x+10 ym -E0x200,
-Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+8 w490 h500 -VScroll -HScroll -Hdr -Multi Count10 AltSubmit vlist hwndhLV 0x2000 +LV0x10000 -E0x200", index|title|proc|tab
+Gui, Add, Text, w420 h25 x+10 vEdit1 ym -E0x200,
+Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+8 w490 h500 -VScroll -HScroll -Hdr -Multi Count10 vlist gListViewClick hwndhLV 0x2000 +LV0x10000 -E0x200", index|title|proc|tab
 Gui, Show, , Window Switcher
 WinWaitActive, ahk_id %switcher_id%, , 1
 ; if gui_pos
@@ -154,19 +154,24 @@ Loop 300 {
     Hotstring(":X:" A_Index , KeyFunc)
 }
 chromeTabObj := Object(), vivaldiTabObj := Object()
-; SetTimer, RefreshTimer, 5000
-; Settimer, CheckIfVisible, 20
 RefreshWindowList()
 global ihook
 ihook := InputHook("", "{Esc}{Enter}")
 ihook.OnChar := Func("onChar")
+ihook.onKeyDown := Func("onKeyDown")
+ihook.NotifyNonText := true
 ihook.OnEnd := Func("onEnd")
+; SetTimer, browserTimer, 3000
 Return
 
 #Include lib\Accv2.ahk
 #Include lib\cJson.ahk
 #Include lib\JEE_AccHelperFuncs.ahk
 
+; browserTimer() {
+;   global
+;   browserTabObj := ParseBrowserWindows()
+; }
 GuiContextMenu() {
   global
   Menu, Context, Show
@@ -179,26 +184,53 @@ MenuHandler() {
   }
 }
 
-; CheckIfVisible:
-;   DetectHiddenWindows, Off
-;   pauseRefresh := WinExist("ahk_id" switcher_id) != "0x0" ? 1 : 0
-; return
+onKeyDown(ihook, vk, sc) {
+  static backspace := 8 
+  , ctrl_w := 87
+  , ctrl_h := 72
+  , del := 46
+  , lctrl := 162
+  , rctrl := 163
+  , last_key
+  search := ihook.Input
+  clear := vk = backspace && (last_key = lctrl || last_key = rctrl)
+    || vk = del
+    || vk = ctrl_w
+  correct := vk = backspace || vk = ctrl_h 
+
+  if clear {
+    ihook.Stop()
+    ihook.Start()
+    search := ""
+  }
+  if correct || clear
+    callRefresh(search)
+  last_key := vk
+  OutputDebug, % vk " - " sc "`n"
+}
+
 onChar(ihook, char) {
   search := ihook.Input
+  OutputDebug, % char " - " search "`n"
   if (char && StrLen(search) > 0) {
-    GuiControl, , Edit1, % search
-    func := Func("RefreshWindowList").bind(search)
-    SetTimer, % func, -1
+    callRefresh(search)
   }
 }
 
-onEnd(ih) {
+callRefresh(search) {
+  GuiControl, , Edit1, % search ;+ "|"
+  func := Func("RefreshWindowList").bind(search)
+  SetTimer, % func, -1
+}
 
+onEnd(ihook) {
+  GuiControl, , Edit1
+  if ihook.EndReason != "EndKey"
+    return
   OutputDebug, % ih.EndKey
-  if ih.EndKey == "Enter" {
+  if ihook.EndKey == "Enter" {
     ActivateWindow()
   }
-  GuiControl, , Edit1
   FadeHide()
 }
 ;----------------------------------------------------------------------
@@ -209,18 +241,18 @@ onEnd(ih) {
 CapsLock:: 
 ShowSwitcher() {
   global
-  ; Thread, NoTimers
+  Thread, NoTimers
+  ihook.Stop()
   ihook.Start()
-  ; pauseRefresh := true
   search := ""
   FadeShow()
+  browserTabObj := ParseBrowserWindows()
   RefreshWindowList()
   WinSet, Transparent, 225, ahk_id %switcher_id%
   WinActivate, ahk_id %switcher_id%
   WinGetPos, , , w, h, ahk_id %switcher_id%
   WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %switcher_id%
   WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
-  ; ControlFocus, Edit1, ahk_id %switcher_id%
   If hideWhenFocusLost
     SetTimer, HideTimer, 10
 }
@@ -234,9 +266,9 @@ Return
 ; Escape::      ; Close window
 ; ^[::          ; ''
 ; ^q::          ; ''
-^Backspace::  ; Clear text
-^w::          ; ''
-^h::          ; Backspace
+; ^Backspace::  ; Clear text
+; ^w::          ; ''
+; ^h::          ; Backspace
 Down::        ; Next row
 Tab::         ; ''
 ^k::          ; ''
@@ -250,8 +282,8 @@ PgDn::        ; Jump down 4 rows
 ^Home::       ; Jump to top
 ^End::        ; Jump to bottom
 !F4::         ; Quit
-~Delete::
-~Backspace::
+; ~Delete::
+; ~Backspace::
   SetKeyDelay, -1
   Switch A_ThisHotkey {
     Case "Enter": ActivateWindow()
@@ -289,7 +321,6 @@ PgDn::        ; Jump down 4 rows
   }
   Return
 
-#If WinActive("ahk_id" switcher_id)
 WheelDown::
 LV_ScrollDown() {
   if (LV_VisibleRows().2 < LV_GetCount())
@@ -324,7 +355,7 @@ LV_ScrollBottom(row := "") {
     if (lastVisibleRow >= row || A_Index > totalRows)
       break
     sendmessage, 0x115, 1, 0,, ahk_id %hlv%
-  } ;Until (lastVisibleRow >= row || lastVisibleRow >= totalRows)
+  } 
   LV_Modify(row, "Select Focus")
 }
 
@@ -337,7 +368,7 @@ LV_ScrollTop(row := "") {
     if (firstVisibleRow <= row - 1 || A_Index > totalRows)
       break
     sendmessage, 0x115, 0, 0,, ahk_id %hlv%
-  } ;Until (firstVisibleRow <= row - 1 || firstVisibleRow <= 0)
+  } 
   LV_Modify(row, "Select Focus")
 }
 
@@ -374,56 +405,13 @@ Quit() {
 
 ;----------------------------------------------------------------------
 ;
-; Runs whenever Edit control is updated
-; SearchChange() {
-;   if !ihook.EndReason
-;     ihook.Start()
-  ; global search
-  ; Gui, Submit, NoHide
-  ; if ((search ~= "^\d+") || (StrLen(search) = 1 && SubStr(search, 1, 1) ~= "[?*<]"))
-  ;   return 
-  ; ; RefreshWindowList(search)
-  ; ; func := Func("Refresh").bind(search)
-  ; func := Func("RefreshWindowList").bind(search)
-  ; Settimer, % func, -1
-; }
-
-; Refresh(search) {
-;   if (LV_GetCount() = 1) {
-;     Gui, Font, c90ee90fj
-;     GuiControl, Font, Edit1
-;   }
-;   StartTime := A_TickCount
-;   windows := RefreshWindowList(search)
-;   ElapsedTime := A_TickCount - StartTime
-;   If (LV_GetCount() > 1) {
-;     Gui, Font, % LV_GetCount() > 1 && windows.MaxIndex() < 1 ? "cff2626" : "cEEE8D5"
-;     GuiControl, Font, Edit1
-;   } Else if (LV_GetCount() = 1) {
-;     Gui, Font, c90ee90fj
-;     GuiControl, Font, Edit1
-;   }
-  ; Debug info: uncomment to inspect the list of windows and matches
-  ; For i, e in windows {
-  ;   str .= Format("{:-4} {:-15} {:-55}`n",A_Index ":",SubStr(e.procName,1,14),StrLen(e.title) > 50 ? SubStr(e.title,1,50) "..." : e.title)
-  ; }
-  ; if search
-  ; OutputDebug, % "lvcount: " LV_GetCount() " - windows: " windows.MaxIndex()
-  ; . "`n------------------------------------------------------------------------------------------------" 
-  ; . Format("`nNew filter: {} | Result count: {:-4} | Time: {:-4} | Search string: {} ",toggleMethod ? "On " : "Off",LV_GetCount(),ElapsedTime,search)
-  ; . "`n------------------------------------------------------------------------------------------------`n" . str
-  ; str := ""
-; }
-
-;----------------------------------------------------------------------
-;
 ; Handle mouse click events on the listview
 ;
-; ListViewClick:
-;   if (A_GuiControlEvent = "Normal") {
-;     ActivateWindow()
-;   }
-; return
+ListViewClick:
+  if (A_GuiControlEvent = "DoubleClick") {
+    ActivateWindow()
+  }
+return
 
 IncludedIn(needle,haystack) {
   for i, e in needle {
@@ -457,29 +445,40 @@ ParseAllWindows() {
       continue
     if title {
         procName := GetProcessName(next)
+      if (procName = "vivaldi") {
+        windows.Push(browserTabObj.vivaldi*)
+      } else if (procName = "chrome") {
+        windows.Push(browserTabObj.chrome*)
+      } else if (procName = "firefox") {
+        windows.Push(browserTabObj.firefox*)
+      } else {
         windows.Push({ "id": next, "title": title, "procName": procName })
+      }
     }
   }
   return windows
 }
 
-
 ParseBrowserWindows() {
-  vivaldiTabsPushed := false
-  chromeTabsPushed := false
-  if (!chromeTabsPushed && procName = "chrome") {
-    chromeTabsPushed := true
+  global chromeDebugPort, vivaldiDebugPort
+  obj := Object()
+  obj.chrome := []
+  if WinExist("ahk_exe chrome.exe") {
     for _, o in chromiumGetTabNames(chromeDebugPort)
-      windows.Push({"id":o.id, "title": o.title, "procName": "Chrome tab", "url": o.url})
-  } else if (procName = "firefox") {
+      obj.chrome.Push({"id":o.id, "title": o.title, "procName": "Chrome tab", "url": o.url})
+  }
+  obj.vivaldi := []
+  if WinExist("ahk_exe vivaldi.exe") {
+    for _, o in chromiumGetTabNames(vivaldiDebugPort)
+      obj.vivaldi.Push({"id":o.id, "title": o.title, "procName": "Vivaldi tab", "url": o.url})
+  }
+  obj.firefox := []
+  if WinExist("ahk_exe firefox.exe") {
     tabs := StrSplit(JEE_FirefoxGetTabNames(next),"`n")
     for i, e in tabs
-      windows.Push({"id":next, "title": e, "procName": "Firefox tab", "num": i})
-  } else if (!vivaldiTabsPushed && procName = "vivaldi") {
-    vivaldiTabsPushed := true
-    for _, o in chromiumGetTabNames(vivaldiDebugPort)
-      windows.Push({"id":o.id, "title": o.title, "procName": "Vivaldi tab", "url": o.url})
+      obj.firefox.Push({"id":next, "title": e, "procName": "Firefox tab", "num": i})
   }
+  return obj
 }
 
 filterWindows(allwindows, search) {
@@ -488,6 +487,7 @@ filterWindows(allwindows, search) {
   found := InStr(search, lastSearch)  
   newSearch := ( !found 
     || !search 
+    || lastResultLen = 0
     || refreshEveryKeystroke 
     || DefaultTCSearch = "?" 
     || SubStr(search, 1, 1) = "?")
@@ -498,7 +498,8 @@ filterWindows(allwindows, search) {
   result := []
   for i, e in toFilter {
     str := e.url " " e.title " " e.procName
-    if !search || TCMatch(str,search) {
+    match := TCMatch(str,search) 
+    if !search || (match && e.HasKey("icon")) {
       result.Push(e)
     }
   }
@@ -546,7 +547,6 @@ RefreshWindowList(search := "") {
     ActivateWindow(1, windows_dict)
   } else {
     ActivateWindow("", windows_dict) ; update function with current windows list
-    ; SetTimer, % DrawListView.Call(windows), -1
     func := Func("DrawListView").Bind(windows)
     SetTimer, % func, -1
   }
@@ -628,9 +628,6 @@ DrawListView(windows, startFrom := 0) {
   LV_ModifyCol(1,compact ? 50 : 70)
   LV_ModifyCol(2,110)
   GuiControl, +Redraw, list
-  ; }
-  ; If (windows.Count() = 1 && activateOnlyMatch)
-    ; ActivateWindow(1)
 }
 
 generateIconList(windows) {
@@ -653,9 +650,6 @@ generateIconList(windows) {
       procName := window.procName
       tab := window.num
       removed := false
-      ; if (wid = Format("{:d}", switcher_id)) {
-      ;   removed := true
-      ; }
       WinGet, style, ExStyle, ahk_id %wid%
       isAppWindow := (style & WS_EX_APPWINDOW)
       isToolWindow := (style & WS_EX_TOOLWINDOW)
@@ -735,36 +729,19 @@ generateIconList(windows) {
         removedRows.Push(wid)
       } else {
         iconCount+=1
-        IconArray[window.id] := {"icon":"Icon" . iconNumber, "num": iconNumber} ; (["Icon" . iconNumber, iconCount, window.procName, title, wid])
+        IconArray[window.id] := {"icon":"Icon" . iconNumber, "num": iconNumber} 
       }
     }
     LV_SetImageList(imageListID, 1)
-  ; for _, e in removedRows {
-  ;   IconArray.RemoveAt(e)
-  ; }
   return IconArray
 }
-
-; RefreshTimer:
-;   if (!pauseRefresh) {
-;     for _, next in GetAllWindows()  {
-;       procName := GetProcessName(next)
-;       if ( procname = "vivaldi") {
-;         vivaldiTabObj := chromiumGetTabNames(vivaldiDebugPort)
-;       } else if ( procname = "chrome") {
-;         chromeTabObj := chromiumGetTabNames(chromeDebugPort)
-;       }
-;     }
-;     RefreshWindowList()
-;   }
-; return
 
 chromiumGetTabNames(debugPort) {
   try {
     whr := ComObjCreate("WinHttp.WinHttpRequest.5.1")
     whr.Open("GET", "http://127.0.0.1:" debugPort "/json/list", true)
     whr.Send()
-    whr.WaitForResponse()
+    whr.WaitForResponse(1)
     v := whr.ResponseText
     obj := JSON.Load(v)
     filtered := []
@@ -784,7 +761,7 @@ chromiumFocusTab(debugPort, title, id) {
     whr := ComObjCreate("WinHttp.WinHttpRequest.5.1")
     whr.Open("GET", "http://127.0.0.1:" debugPort "/json/activate/" id, true)
     whr.Send()
-    whr.WaitForResponse()
+    whr.WaitForResponse(1)
     WinWait, % title, , 2
     WinActivate
     ControlFocus, ahk_class Chrome_WidgetWin_1
@@ -895,8 +872,7 @@ WM_SETCURSOR() {
     CursorHandle := DllCall("LoadCursor", "ptr", 0, "ptr", Cursor, "ptr")
     LastCursor := DllCall("SetCursor", "uint", CursorHandle)
     Return true
-  } ;else return
-
+  } 
 }
 
 InRange(val, start, count) {
