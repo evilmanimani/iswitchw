@@ -51,7 +51,7 @@ DefaultTCSearch := "<"
 activateOnlyMatch := false
 
 ; Hides the UI when focus is lost!
-hideWhenFocusLost := true
+hideWhenFocusLost := false
 
 ; Window titles containing any of the listed substrings are filtered out from results
 ; useful for things like  hiding improperly configured tool windows or screen
@@ -108,9 +108,9 @@ OnExit("Quit")
 ; Load saved position from settings.ini
 IniRead, gui_pos, settings.ini, position, gui_pos, 0
 
-OnMessage(0x20, "WM_SETCURSOR")
-OnMessage(0x200, "WM_MOUSEMOVE")
-OnMessage(0x201, "WM_LBUTTONDOWN")
+; OnMessage(0x20, "WM_SETCURSOR")
+; OnMessage(0x200, "WM_MOUSEMOVE")
+; OnMessage(0x201, "WM_LBUTTONDOWN")
 
 fileList := []
 if IsObject(shortcutFolders) {
@@ -128,12 +128,12 @@ Gui, Margin, 8, 10
 Gui, Font, s14 cEEE8D5, Segoe MDL2 Assets
 Gui, Add, Text, xm+5 ym+3, % Chr(0xE721)
 Gui, Font, s10 cEEE8D5, Segoe UI
-Gui, Add, Edit, w420 h25 x+10 ym gSearchChange vsearch -E0x200,
-Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+8 w490 h500 -VScroll -HScroll -Hdr -Multi Count10 AltSubmit vlist hwndhLV gListViewClick 0x2000 +LV0x10000 -E0x200", index|title|proc|tab
+Gui, Add, Edit, w420 h25 x+10 ym -E0x200,
+Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+8 w490 h500 -VScroll -HScroll -Hdr -Multi Count10 AltSubmit vlist hwndhLV 0x2000 +LV0x10000 -E0x200", index|title|proc|tab
 Gui, Show, , Window Switcher
 WinWaitActive, ahk_id %switcher_id%, , 1
-if gui_pos
-  SetWindowPosition(switcher_id, StrSplit(gui_pos, A_Space)*)
+; if gui_pos
+;   SetWindowPosition(switcher_id, StrSplit(gui_pos, A_Space)*)
 LV_ModifyCol(4,0)
 Resize()
 WinHide, ahk_id %switcher_id%
@@ -153,12 +153,14 @@ Loop 300 {
   Hotkey, IfWinActive, % "ahk_id" switcher_id
     Hotstring(":X:" A_Index , KeyFunc)
 }
-
 chromeTabObj := Object(), vivaldiTabObj := Object()
-Gosub, RefreshTimer
-SetTimer, RefreshTimer, 5000
-Settimer, CheckIfVisible, 20
-
+; SetTimer, RefreshTimer, 5000
+; Settimer, CheckIfVisible, 20
+RefreshWindowList()
+global ihook
+ihook := InputHook("", "{Esc}{Enter}")
+ihook.OnChar := Func("onChar")
+ihook.OnEnd := Func("onEnd")
 Return
 
 #Include lib\Accv2.ahk
@@ -177,41 +179,61 @@ MenuHandler() {
   }
 }
 
-CheckIfVisible:
-  DetectHiddenWindows, Off
-  pauseRefresh := WinExist("ahk_id" switcher_id) != "0x0" ? 1 : 0
-return
+; CheckIfVisible:
+;   DetectHiddenWindows, Off
+;   pauseRefresh := WinExist("ahk_id" switcher_id) != "0x0" ? 1 : 0
+; return
+onChar(ihook, char) {
+  search := ihook.Input
+  if (char && StrLen(search) > 0) {
+    GuiControl, , Edit1, % search
+    func := Func("RefreshWindowList").bind(search)
+    SetTimer, % func, -1
+  }
+}
 
+onEnd(ih) {
+
+  OutputDebug, % ih.EndKey
+  if ih.EndKey == "Enter" {
+    ActivateWindow()
+  }
+  GuiControl, , Edit1
+  FadeHide()
+}
 ;----------------------------------------------------------------------
 ;
 ; Win+space to activate.
 ;
-#space::  
-; CapsLock:: ; Use Shift+Capslock to toggle while in use by the hotkey
-  search := lastSearch := ""
-  allwindows := Object()
-  GuiControl, , Edit1
+; #space::  
+CapsLock:: 
+ShowSwitcher() {
+  global
+  ; Thread, NoTimers
+  ihook.Start()
+  ; pauseRefresh := true
+  search := ""
   FadeShow()
+  RefreshWindowList()
   WinSet, Transparent, 225, ahk_id %switcher_id%
   WinActivate, ahk_id %switcher_id%
   WinGetPos, , , w, h, ahk_id %switcher_id%
   WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %switcher_id%
   WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
-  ControlFocus, Edit1, ahk_id %switcher_id%
+  ; ControlFocus, Edit1, ahk_id %switcher_id%
   If hideWhenFocusLost
     SetTimer, HideTimer, 10
-
-Return
+}
 
 tooltipOff:
   ToolTip
 Return
 
 #If WinActive("ahk_id" switcher_id)
-Enter::       ; Activate window
-Escape::      ; Close window
-^[::          ; ''
-^q::          ; ''
+; Enter::       ; Activate window
+; Escape::      ; Close window
+; ^[::          ; ''
+; ^q::          ; ''
 ^Backspace::  ; Clear text
 ^w::          ; ''
 ^h::          ; Backspace
@@ -281,6 +303,16 @@ LV_ScrollUp() {
     sendmessage, 0x115, 0, 0,, ahk_id %hlv%
 }
 return  
+
+~LButton Up::
+  If isResizing {
+    Resize()
+    SetTimer, % SaveTimer, -500 
+    ; Tooltip
+    isResizing := 0
+    DllCall("ReleaseCapture")
+  }
+return
 #if
 
 LV_ScrollBottom(row := "") {
@@ -324,7 +356,7 @@ SaveTimer() {
   global switcher_id, gui_pos
   CoordMode, Pixel, Screen
   WinGetPos, x, y, w, h, % "ahk_id" switcher_id
-  IniWrite, % Format("{} {} {} {}",x,y,w,h) , settings.ini, position, gui_pos
+  IniWrite, % Format("{} {} {} {}", x, y, w, h) , settings.ini, position, gui_pos
 }
 
 ; Hides the UI if it loses focus
@@ -343,29 +375,34 @@ Quit() {
 ;----------------------------------------------------------------------
 ;
 ; Runs whenever Edit control is updated
-SearchChange() {
-  global
-  Gui, Submit, NoHide
-  if ((search ~= "^\d+") || (StrLen(search) = 1 && SubStr(search, 1, 1) ~= "[?*<]"))
-    return 
-  Settimer, Refresh, -1
-}
+; SearchChange() {
+;   if !ihook.EndReason
+;     ihook.Start()
+  ; global search
+  ; Gui, Submit, NoHide
+  ; if ((search ~= "^\d+") || (StrLen(search) = 1 && SubStr(search, 1, 1) ~= "[?*<]"))
+  ;   return 
+  ; ; RefreshWindowList(search)
+  ; ; func := Func("Refresh").bind(search)
+  ; func := Func("RefreshWindowList").bind(search)
+  ; Settimer, % func, -1
+; }
 
-Refresh:
-  if (LV_GetCount() = 1) {
-    Gui, Font, c90ee90fj
-    GuiControl, Font, Edit1
-  }
-  StartTime := A_TickCount
-  RefreshWindowList()
-  ElapsedTime := A_TickCount - StartTime
-  If (LV_GetCount() > 1) {
-    Gui, Font, % LV_GetCount() > 1 && windows.MaxIndex() < 1 ? "cff2626" : "cEEE8D5"
-    GuiControl, Font, Edit1
-  } Else if (LV_GetCount() = 1) {
-    Gui, Font, c90ee90fj
-    GuiControl, Font, Edit1
-  }
+; Refresh(search) {
+;   if (LV_GetCount() = 1) {
+;     Gui, Font, c90ee90fj
+;     GuiControl, Font, Edit1
+;   }
+;   StartTime := A_TickCount
+;   windows := RefreshWindowList(search)
+;   ElapsedTime := A_TickCount - StartTime
+;   If (LV_GetCount() > 1) {
+;     Gui, Font, % LV_GetCount() > 1 && windows.MaxIndex() < 1 ? "cff2626" : "cEEE8D5"
+;     GuiControl, Font, Edit1
+;   } Else if (LV_GetCount() = 1) {
+;     Gui, Font, c90ee90fj
+;     GuiControl, Font, Edit1
+;   }
   ; Debug info: uncomment to inspect the list of windows and matches
   ; For i, e in windows {
   ;   str .= Format("{:-4} {:-15} {:-55}`n",A_Index ":",SubStr(e.procName,1,14),StrLen(e.title) > 50 ? SubStr(e.title,1,50) "..." : e.title)
@@ -376,17 +413,17 @@ Refresh:
   ; . Format("`nNew filter: {} | Result count: {:-4} | Time: {:-4} | Search string: {} ",toggleMethod ? "On " : "Off",LV_GetCount(),ElapsedTime,search)
   ; . "`n------------------------------------------------------------------------------------------------`n" . str
   ; str := ""
-return
+; }
 
 ;----------------------------------------------------------------------
 ;
 ; Handle mouse click events on the listview
 ;
-ListViewClick:
-  if (A_GuiControlEvent = "Normal") {
-    ActivateWindow()
-  }
-return
+; ListViewClick:
+;   if (A_GuiControlEvent = "Normal") {
+;     ActivateWindow()
+;   }
+; return
 
 IncludedIn(needle,haystack) {
   for i, e in needle {
@@ -411,82 +448,130 @@ GetAllWindows() {
 ; Fetch info on all active windows
 ;
 ParseAllWindows() {
-  global switcher_id, filters, vivaldiTabObj, chromeTabObj
+  global switcher_id, filters 
   windows := Object()
   top := DllCall("GetTopWindow", "Ptr","")
-  vivaldiTabsPushed := false
-  chromeTabsPushed := false
-  Loop {
-    next :=	DllCall("GetWindow", "Ptr", (A_Index = 1 ? top : next),"uint",2)
+  for _, next in GetAllWindows() {
     WinGetTitle, title, % "ahk_id" next
     if IncludedIn(filters, title) > -1
       continue
     if title {
-      procName := GetProcessName(next)
-      if (!chromeTabsPushed && procName = "chrome" && chromeTabObj.Length() > 0) {
-        chromeTabsPushed := true
-        for _, o in chromeTabObj
-          windows.Push({"id":o.id, "title": o.title, "procName": "Chrome tab"})
-      } else if (procName = "firefox") {
-        tabs := StrSplit(JEE_FirefoxGetTabNames(next),"`n")
-        for i, e in tabs
-          windows.Push({"id":next, "title": e, "procName": "Firefox tab", "num": i})
-      } else if (!vivaldiTabsPushed && procName = "vivaldi" && vivaldiTabObj.Length() > 0) {
-        vivaldiTabsPushed := true
-        for _, o in vivaldiTabObj
-          windows.Push({"id":o.id, "title": o.title, "procName": "Vivaldi tab"})
-      } Else {
+        procName := GetProcessName(next)
         windows.Push({ "id": next, "title": title, "procName": procName })
-      }
     }
-  } Until (!next)
-
+  }
   return windows
 }
 
-RefreshWindowList() {
-  global allwindows, windows, scoreMatches, fileList
-  global search, lastSearch, refreshEveryKeystroke
-  windows := []
-  toRemove := ""
-  If (DefaultTCSearch = "?" || SubStr(search, 1, 1) = "?" || !search || refreshEveryKeystroke || StrLen(search) < StrLen(lastSearch)) {
+
+ParseBrowserWindows() {
+  vivaldiTabsPushed := false
+  chromeTabsPushed := false
+  if (!chromeTabsPushed && procName = "chrome") {
+    chromeTabsPushed := true
+    for _, o in chromiumGetTabNames(chromeDebugPort)
+      windows.Push({"id":o.id, "title": o.title, "procName": "Chrome tab", "url": o.url})
+  } else if (procName = "firefox") {
+    tabs := StrSplit(JEE_FirefoxGetTabNames(next),"`n")
+    for i, e in tabs
+      windows.Push({"id":next, "title": e, "procName": "Firefox tab", "num": i})
+  } else if (!vivaldiTabsPushed && procName = "vivaldi") {
+    vivaldiTabsPushed := true
+    for _, o in chromiumGetTabNames(vivaldiDebugPort)
+      windows.Push({"id":o.id, "title": o.title, "procName": "Vivaldi tab", "url": o.url})
+  }
+}
+
+filterWindows(allwindows, search) {
+  global fileList, DefaultTCSearch
+  static lastResultLen := 0, lastSearch := "", last_windows := []
+  found := InStr(search, lastSearch)  
+  newSearch := ( !found 
+    || !search 
+    || refreshEveryKeystroke 
+    || DefaultTCSearch = "?" 
+    || SubStr(search, 1, 1) = "?")
+  toFilter := newSearch ? allwindows : last_windows
+  if (newSearch)
+    lastResultLen = 0
+  lastSearch := search
+  result := []
+  for i, e in toFilter {
+    str := e.url " " e.title " " e.procName
+    if !search || TCMatch(str,search) {
+      result.Push(e)
+    }
+  }
+  resultLen := result.Count()
+  updateSearchStringColour(resultLen, lastResultLen)
+  lastResultLen := resultLen > 0 ? resultLen : lastResultLen
+  last_windows := result
+  return result
+}
+
+updateSearchStringColour(len, last_len) {
+  red := "cff2626"
+  green := "c90ee90fj"
+  color := "cEEE8D5" ; white
+  if (len == 1 || len <= 1 && last_len = 1) { 
+    color := green 
+  } else if (last_len > 1 && len == 0) { 
+    color := red 
+  }
+  Gui, Font, % color
+  GuiControl, Font, Edit1
+}
+
+RefreshWindowList(search := "") {
+  global fileList, refreshEveryKeystroke, activateOnlyMatch
+  static allwindows := ParseAllWindows()
+  if !search {
     allwindows := ParseAllWindows()
     for _, e in fileList {
       path := e.path 
       SplitPath, path, OutFileName, OutDir, OutExt, OutNameNoExt, OutDrive
       RegExMatch(OutDir, "\\(\w+)$", folder)
-      allwindows.Push({"procname":folder1,"title":e.fileName . (!RegExMatch(OutExt,"txt|lnk") ? "." OutExt : "" ),"path":e.path})
+      allwindows.Push({"procname":folder1
+                      ,"title":e.fileName . (!RegExMatch(OutExt,"txt|lnk") ? "." OutExt : "" )
+                      ,"path":e.path})
     }
   }
-  lastSearch := search
-  for i, e in allwindows {
-    str := e.procName " " e.title
-    if !search || TCMatch(str,search) {
-      windows.Push(e)
-    } else {
-      toRemove .= i ","
-    }
+  windows := !!search ? filterWindows(allwindows, search) : allwindows
+  windows_dict := {}
+  for _, o in windows {
+    windows_dict[o.id] := o
   }
   ; OutputDebug, % "Allwindows count: " allwindows.MaxIndex() " | windows count: " windows.MaxIndex() "`n"
-  DrawListView(windows)
-  for i, e in StrSplit(toRemove,",")
-    allwindows.Delete(e)
+  If (windows.Count() = 1 && activateOnlyMatch) {
+    ActivateWindow(1, windows_dict)
+  } else {
+    ActivateWindow("", windows_dict) ; update function with current windows list
+    ; SetTimer, % DrawListView.Call(windows), -1
+    func := Func("DrawListView").Bind(windows)
+    SetTimer, % func, -1
+  }
+  return windows
 }
 
-ActivateWindow(rowNum := "") {
-  global windows, ChromeInst, vivaldiDebugPort, chromeDebugPort
+ActivateWindow(rowNum := "", updateWindows := false) {
+  static windows
+  global vivaldiDebugPort, chromeDebugPort
+  if IsObject(updateWindows) {
+    windows := updateWindows
+    if (!rowNum)
+      return
+  }
   If !rowNum 
     rowNum:= LV_GetNext("F")
   If (rowNum > LV_GetCount())
     return
-  LV_GetText(procName, rowNum, 2)
-  LV_GetText(title, rowNum, 3)
+  updateSearchStringColour(0,0)
   LV_GetText(wid, rowNum, 4)
-  Gui Submit, NoHide
   FadeHide()
-  window := windows[rowNum]
-  num := window.num
+  window := windows[wid]
+  procName := window.procName
   title := window.title
+  num := window.num
   id := window.id
   If window.HasKey("path") {
     Run, % """" window.path """" 
@@ -496,14 +581,14 @@ ActivateWindow(rowNum := "") {
     Else If (procName = "Chrome tab")
       chromiumFocusTab(chromeDebugPort, title, id)
     Else If (procName = "Firefox tab")
-      JEE_FirefoxFocusTabByNum(wid,num, title)
-    Else If WinActive("ahk_id" wid) {
-      WinGet, state, MinMax, ahk_id %wid%
+      JEE_FirefoxFocusTabByNum(id,num, title)
+    Else If WinActive("ahk_id" id) {
+      WinGet, state, MinMax, ahk_id %id%
       if (state = -1) {
-        WinRestore, ahk_id %wid%
+        WinRestore, ahk_id %id%
       }
     } else {
-      WinActivate, ahk_id %wid%
+      WinActivate, ahk_id %id%
     }
   }
 }
@@ -513,8 +598,44 @@ ActivateWindow(rowNum := "") {
 ; Add window list to listview
 ;
 DrawListView(windows, startFrom := 0) {
-  Global switcher_id, fileList, hlv
-  static IconArray
+  Global switcher_id, fileList, hlv, compact
+  if windows.Count() = 0 {
+    return
+  }
+  iconArray := generateIconList(windows)
+  LV_GetText(selectedRow, LV_GetNext(),3)
+  GuiControl, -Redraw, list
+  LV_Delete()
+  row_num := 1
+  for i, e in windows { 
+    if (i < startFrom)
+      continue
+    if iconArray.HasKey(e.id) {
+      icon := iconArray[e.id].icon
+      arr := [icon, row_num, e.procName, e.title, e.id]
+      LV_Add(arr*)
+      row_num++
+    }
+  }
+  LV_Modify(1, "Select Focus")
+  loop % LV_GetCount() {
+    LV_GetText(r,A_Index,3)
+    if (r = selectedRow) {
+      LV_Modify(A_Index,"Select Focus Vis")
+      break
+    }
+  }
+  LV_ModifyCol(1,compact ? 50 : 70)
+  LV_ModifyCol(2,110)
+  GuiControl, +Redraw, list
+  ; }
+  ; If (windows.Count() = 1 && activateOnlyMatch)
+    ; ActivateWindow(1)
+}
+
+generateIconList(windows) {
+  global compact
+  static IconArray := {}
   , WS_EX_TOOLWINDOW = 0x80
   , WS_EX_APPWINDOW = 0x40000
   , GW_OWNER = 4
@@ -523,155 +644,120 @@ DrawListView(windows, startFrom := 0) {
   , ICON_BIG := 1
   , ICON_SMALL2 := 2
   , ICON_SMALL := 0
-  if !WinExist("ahk_id" switcher_id)
-    return
-  imageListID := IL_Create(windowCount, 1, compact ? 0 : 1)
-  If !IsObject(IconArray)
-    IconArray := {}
-  windowCount := windows.MaxIndex()
-  If !windowCount
-    return
   iconCount = 0
-  removedRows := Array()
-  allRows := []
+  tempArray := {}
+  imageListID := IL_Create(windows.Count(), 1, compact ? 0 : 1)
+    For idx, window in windows {
+      wid := window.id
+      title := window.title
+      procName := window.procName
+      tab := window.num
+      removed := false
+      ; if (wid = Format("{:d}", switcher_id)) {
+      ;   removed := true
+      ; }
+      WinGet, style, ExStyle, ahk_id %wid%
+      isAppWindow := (style & WS_EX_APPWINDOW)
+      isToolWindow := (style & WS_EX_TOOLWINDOW)
 
-  LV_SetImageList(imageListID, 1)
-  LV_GetText(selectedRow, LV_GetNext(),3)
-  GuiControl, -Redraw, list
-  LV_Delete()
-  For idx, window in windows {
-    
-    wid := window.id
-    title := window.title
-    procName := window.procName
-    tab := window.num
-    removed := false
-    if (wid = Format("{:d}", switcher_id)) {
-      removed := true
-    }
-    WinGet, style, ExStyle, ahk_id %wid%
-    isAppWindow := (style & WS_EX_APPWINDOW)
-    isToolWindow := (style & WS_EX_TOOLWINDOW)
-
-    ownerHwnd := DllCall("GetWindow", "uint", wid, "uint", GW_OWNER)
-    iconNumber := ""
-    if window.HasKey("path") {
-      FileName := window.path
-      ; Calculate buffer size required for SHFILEINFO structure.
-      sfi_size := A_PtrSize + 8 + (A_IsUnicode ? 680 : 340)
-      VarSetCapacity(sfi, sfi_size)
-      SplitPath, FileName,,, FileExt ; Get the file's extension.
-      for i, e in fileList {
-        if (e.path = window.path) {
-          fileObj := fileList[i]
-          iconHandle := fileObj.icon
-          Break
+      ownerHwnd := DllCall("GetWindow", "uint", wid, "uint", GW_OWNER)
+      iconNumber := ""
+      if window.HasKey("path") {
+        FileName := window.path
+        ; Calculate buffer size required for SHFILEINFO structure.
+        sfi_size := A_PtrSize + 8 + (A_IsUnicode ? 680 : 340)
+        VarSetCapacity(sfi, sfi_size)
+        SplitPath, FileName,,, FileExt ; Get the file's extension.
+        for i, e in fileList {
+          if (e.path = window.path) {
+            fileObj := fileList[i]
+            iconHandle := fileObj.icon
+            Break
+          }
         }
-      }
-      If !iconHandle {
-        if !DllCall("Shell32\SHGetFileInfo" . (A_IsUnicode ? "W":"A"), "Str", FileName
-        , "UInt", 0, "Ptr", &sfi, "UInt", sfi_size, "UInt", 0x101) { ; 0x101 is SHGFI_ICON+SHGFI_SMALLICON
-          IconNumber := 9999999 ; Set it out of bounds to display a blank icon.
-        } else {
-          iconHandle := NumGet(sfi, 0)
-          fileObj.icon := iconHandle
+        If !iconHandle {
+          if !DllCall("Shell32\SHGetFileInfo" . (A_IsUnicode ? "W":"A"), "Str", FileName
+          , "UInt", 0, "Ptr", &sfi, "UInt", sfi_size, "UInt", 0x101) { ; 0x101 is SHGFI_ICON+SHGFI_SMALLICON
+            IconNumber := 9999999 ; Set it out of bounds to display a blank icon.
+          } else {
+            iconHandle := NumGet(sfi, 0)
+            fileObj.icon := iconHandle
+          }
         }
-      }
-      if (iconHandle <> 0)
-        iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, iconHandle) + 1
-    } else if (procName ~= "(Chrome|Firefox|Vivaldi) tab" || isAppWindow || ( !ownerHwnd and !isToolWindow )) {
-      if !(iconHandle := window.icon) {
-        if (procName = "Chrome tab") ; Apply the Chrome icon to found Chrome tabs
-          wid := WinExist("ahk_exe chrome.exe")
-        else if (procName = "Firefox tab")
-          wid := WinExist("ahk_exe firefox.exe")
-        else if (procName = "Vivaldi tab")
-          wid := WinExist("ahk_exe vivaldi.exe")
-        ; http://www.autohotkey.com/docs/misc/SendMessageList.htm
+        if (iconHandle != 0)
+          iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, iconHandle) + 1
+      } else if (procName ~= "(Chrome|Firefox|Vivaldi) tab" || isAppWindow || ( !ownerHwnd and !isToolWindow )) {
+        if !(iconHandle := window.icon) {
+          if (procName = "Chrome tab") ; Apply the Chrome icon to found Chrome tabs
+            wid := WinExist("ahk_exe chrome.exe")
+          else if (procName = "Firefox tab")
+            wid := WinExist("ahk_exe firefox.exe")
+          else if (procName = "Vivaldi tab")
+            wid := WinExist("ahk_exe vivaldi.exe")
+          ; http://www.autohotkey.com/docs/misc/SendMessageList.htm
 
-        SendMessage, WM_GETICON, ICON_BIG, 0, , ahk_id %wid%
-        iconHandle := ErrorLevel
-        if (iconHandle = 0) {
-          SendMessage, WM_GETICON, ICON_SMALL2, 0, , ahk_id %wid%
+          SendMessage, WM_GETICON, ICON_BIG, 0, , ahk_id %wid%
           iconHandle := ErrorLevel
           if (iconHandle = 0) {
-            SendMessage, WM_GETICON, ICON_SMALL, 0, , ahk_id %wid%
+            SendMessage, WM_GETICON, ICON_SMALL2, 0, , ahk_id %wid%
             iconHandle := ErrorLevel
             if (iconHandle = 0) {
-              ; http://msdn.microsoft.com/en-us/library/windows/desktop/ms633581(v=vs.85).aspx
-              ; To write code that is compatible with both 32-bit and 64-bit
-              ; versions of Windows, use GetClassLongPtr. When compiling for 32-bit
-              ; Windows, GetClassLongPtr is defined as a call to the GetClassLong
-              ; function.
-              iconHandle := DllCall("GetClassLongPtr", "uint", wid, "int", -14) ; GCL_HICON is -14
-
+              SendMessage, WM_GETICON, ICON_SMALL, 0, , ahk_id %wid%
+              iconHandle := ErrorLevel
               if (iconHandle = 0) {
-                iconHandle := DllCall("GetClassLongPtr", "uint", wid, "int", -34) ; GCL_HICONSM is -34
+                ; http://msdn.microsoft.com/en-us/library/windows/desktop/ms633581(v=vs.85).aspx
+                ; To write code that is compatible with both 32-bit and 64-bit
+                ; versions of Windows, use GetClassLongPtr. When compiling for 32-bit
+                ; Windows, GetClassLongPtr is defined as a call to the GetClassLong
+                ; function.
+                iconHandle := DllCall("GetClassLongPtr", "uint", wid, "int", -14) ; GCL_HICON is -14
+
                 if (iconHandle = 0) {
-                  iconHandle := DllCall("LoadIcon", "uint", 0, "uint", 32512) ; IDI_APPLICATION is 32512
+                  iconHandle := DllCall("GetClassLongPtr", "uint", wid, "int", -34) ; GCL_HICONSM is -34
+                  if (iconHandle = 0) {
+                    iconHandle := DllCall("LoadIcon", "uint", 0, "uint", 32512) ; IDI_APPLICATION is 32512
+                  }
                 }
               }
             }
           }
         }
+        if (iconHandle != 0) {
+          iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, iconHandle) + 1
+          window.icon := iconHandle
+        }
+      } else {
+        WinGetClass, Win_Class, ahk_id %wid%
+        if Win_Class = #32770 ; fix for displaying control panel related windows (dialog class) that aren't on taskbar
+          iconNumber := IL_Add(imageListID, "C:\WINDOWS\system32\shell32.dll", 217) ; generic control panel icon
       }
-      if (iconHandle <> 0) {
-        iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, iconHandle) + 1
-        window.icon := iconHandle
+      if (removed || iconNumber < 1) {
+        removedRows.Push(wid)
+      } else {
+        iconCount+=1
+        IconArray[window.id] := {"icon":"Icon" . iconNumber, "num": iconNumber} ; (["Icon" . iconNumber, iconCount, window.procName, title, wid])
       }
-    } else {
-      WinGetClass, Win_Class, ahk_id %wid%
-      if Win_Class = #32770 ; fix for displaying control panel related windows (dialog class) that aren't on taskbar
-        iconNumber := IL_Add(imageListID, "C:\WINDOWS\system32\shell32.dll", 217) ; generic control panel icon
     }
-    if (removed || iconNumber < 1) {
-      removedRows.Push(idx)
-    } else {
-      iconCount+=1
-      allRows.Push(["Icon" . iconNumber, iconCount, window.procName, title, wid])
-    }
-  }
-  GuiControl, +Redraw, list
-  for i, e in allRows { 
-    if (i < startFrom)
-      continue
-      LV_Add(e*)
-  }
-  for _, e in removedRows {
-    windows.RemoveAt(e)
-  }
-  loop % LV_GetCount() {
-    LV_GetText(r,A_Index,3)
-    if (r = selectedRow) {
-      LV_Modify(A_Index,"Select Focus Vis")
-      break
-    }
-  }
-  ; Don't draw rows without icons.
-  windowCount-=removedRows.MaxIndex()
-
-  LV_Modify(1, "Select Focus")
-
-  LV_ModifyCol(1,compact ? 50 : 70)
-  LV_ModifyCol(2,110)
-  GuiControl, +Redraw, list
-  If (windows.Count() = 1 && activateOnlyMatch)
-    ActivateWindow(1)
+    LV_SetImageList(imageListID, 1)
+  ; for _, e in removedRows {
+  ;   IconArray.RemoveAt(e)
+  ; }
+  return IconArray
 }
 
-RefreshTimer:
-  if (!pauseRefresh) {
-    for _, next in GetAllWindows()  {
-      procName := GetProcessName(next)
-      if ( procname = "vivaldi") {
-        vivaldiTabObj := chromiumGetTabNames(vivaldiDebugPort)
-      } else if ( procname = "chrome") {
-        chromeTabObj := chromiumGetTabNames(chromeDebugPort)
-      }
-    }
-    RefreshWindowList()
-  }
-return
+; RefreshTimer:
+;   if (!pauseRefresh) {
+;     for _, next in GetAllWindows()  {
+;       procName := GetProcessName(next)
+;       if ( procname = "vivaldi") {
+;         vivaldiTabObj := chromiumGetTabNames(vivaldiDebugPort)
+;       } else if ( procname = "chrome") {
+;         chromeTabObj := chromiumGetTabNames(chromeDebugPort)
+;       }
+;     }
+;     RefreshWindowList()
+;   }
+; return
 
 chromiumGetTabNames(debugPort) {
   try {
@@ -724,20 +810,10 @@ FadeShow() {
 }
 
 FadeHide() {
-  LV_Modify(1, "Select Focus Vis")
+  global
   DllCall("AnimateWindow",UInt,switcher_id,UInt,75,UInt,0x90000)
 }
 
-~LButton Up::
-  critical
-  If isResizing {
-    Resize()
-    SetTimer, % SaveTimer, -500 
-    ; Tooltip
-    isResizing := 0
-    DllCall("ReleaseCapture")
-  }
-return
 
 WM_LBUTTONDOWN() {
 
@@ -751,7 +827,7 @@ WM_LBUTTONDOWN() {
   If (!isResizing && resizeBorder) {
     isResizing := 1
     DllCall("SetCapture", "UInt", switcher_id)
-    return
+    return  
   }
 
   MouseGetPos, , mouseY,, ctrl
@@ -878,7 +954,6 @@ WM_MOUSEMOVE() {
 }
 
 Resize(width := "", height := "") {
-  critical
   global hLV
   if (LV_VisibleRows().2 = LV_GetCount())
     LV_ScrollDown()
