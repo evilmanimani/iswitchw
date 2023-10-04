@@ -466,7 +466,7 @@ ParseBrowserWindows() {
 filterWindows(allwindows, search) {
   global fileList, DefaultTCSearch
   static lastResultLen := 0, lastSearch := "", last_windows := []
-  found := InStr(search, lastSearch)  
+  found := InStr(search, lastSearch)
   newSearch := ( !found 
     || !search 
     || lastResultLen = 0
@@ -485,6 +485,8 @@ filterWindows(allwindows, search) {
       result.Push(e)
     }
   }
+  if (result.Length() == 0)
+    result := last_windows
   resultLen := result.Count()
   updateSearchStringColour(resultLen, lastResultLen)
   lastResultLen := resultLen > 0 ? resultLen : lastResultLen
@@ -720,7 +722,7 @@ chromiumGetTabNames(debugPort) {
     whr := ComObjCreate("WinHttp.WinHttpRequest.5.1")
     whr.Open("GET", "http://127.0.0.1:" debugPort "/json/list", true)
     whr.Send()
-    whr.WaitForResponse(1)
+    whr.WaitForResponse(2)
     v := whr.ResponseText
     obj := JSON.Load(v)
     filtered := []
@@ -740,7 +742,7 @@ chromiumFocusTab(debugPort, title, id) {
     whr := ComObjCreate("WinHttp.WinHttpRequest.5.1")
     whr.Open("GET", "http://127.0.0.1:" debugPort "/json/activate/" id, true)
     whr.Send()
-    whr.WaitForResponse(1)
+    whr.WaitForResponse(2)
     WinWait, % title, , 2
     WinActivate
     ControlFocus, ahk_class Chrome_WidgetWin_1
