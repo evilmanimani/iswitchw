@@ -27,13 +27,13 @@
 ;
 
 ; Use small icons in the listview
-Global compact := true
+Global compact := false
 
 ; A bit of a hack, but this 'hides' the scroll bars, rather the listview is    
 ; sized out of bounds, you'll still be able to use the scroll wheel or arrows
 ; but when resizing the window you can't use the left edge of the window, just
 ; the top and bottom right.
-Global hideScrollBars := true
+Global hideScrollBars := false
 
 ; Uses tcmatch.dll included with QuickSearch eXtended by Samuel Plentz
 ; https://www.ghisler.ch/board/viewtopic.php?t=22592
@@ -45,7 +45,7 @@ Global hideScrollBars := true
 ;   * - for srch    
 ;   < - for simularity
 ; recommended '*' for fast fuzzy searching; you can set one of the other search modes as default here instead if destired
-DefaultTCSearch := "*" 
+DefaultTCSearch := "<" 
 
 ; Activate the window if it's the only match
 activateOnlyMatch := false
@@ -63,7 +63,6 @@ filters := []
 ; Enter new paths as an array
 ; todo: show file extensions/path in the list, etc.
 shortcutFolders := []
-
 ; Set this to true to update the list of windows every time the search is
 ; updated. This is usually not necessary and creates additional overhead, so
 ; it is disabled by default. 
@@ -129,7 +128,7 @@ Gui, Font, s14 cEEE8D5, Segoe MDL2 Assets
 Gui, Add, Text, xm+5 ym+3, % Chr(0xE721)
 Gui, Font, s10 cEEE8D5, Segoe UI
 Gui, Add, Text, w420 h25 x+10 vEdit1 ym -E0x200,
-Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+8 w490 h500 -VScroll -HScroll -Hdr -Multi Count10 vlist gListViewClick hwndhLV 0x2000 +LV0x10000 -E0x200", index|title|proc|tab
+Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+8 w490 h500 -Hdr -Multi Count10 vlist gListViewFunc hwndhLV 0x2000 +LV0x100 +LV0x10000 -E0x200", index|title|proc|tab
 Gui, Show, , Window Switcher
 WinWaitActive, ahk_id %switcher_id%, , 1
 ; if gui_pos
@@ -168,10 +167,6 @@ Return
 #Include lib\cJson.ahk
 #Include lib\JEE_AccHelperFuncs.ahk
 
-; browserTimer() {
-;   global
-;   browserTabObj := ParseBrowserWindows()
-; }
 GuiContextMenu() {
   global
   Menu, Context, Show
@@ -186,8 +181,9 @@ MenuHandler() {
 
 onKeyDown(ihook, vk, sc) {
   static backspace := 8 
+  , ctrl_q := 81
   , ctrl_w := 87
-  , ctrl_h := 72
+  ; , ctrl_h := 72
   , del := 46
   , lctrl := 162
   , rctrl := 163
@@ -196,16 +192,22 @@ onKeyDown(ihook, vk, sc) {
   clear := vk = backspace && (last_key = lctrl || last_key = rctrl)
     || vk = del
     || vk = ctrl_w
-  correct := vk = backspace || vk = ctrl_h 
-
-  if clear {
+  correct := vk = backspace ;|| vk = ctrl_h 
+  if (vk = ctrl_q) {
+    ihook.Stop()
+    FadeHide()
+  } 
+  if (clear) {
     ihook.Stop()
     ihook.Start()
     search := ""
-  }
-  if correct || clear
+  } 
+  if (correct || clear) {
     callRefresh(search)
+  }
   last_key := vk
+  if !WinExist("ahk_id" switcher_id)
+    ihook.Stop()
   OutputDebug, % vk " - " sc "`n"
 }
 
@@ -217,8 +219,8 @@ onChar(ihook, char) {
   }
 }
 
-callRefresh(search) {
-  GuiControl, , Edit1, % search ;+ "|"
+callRefresh(search := "") {
+  GuiControl, , Edit1, % search
   func := Func("RefreshWindowList").bind(search)
   SetTimer, % func, -1
 }
@@ -238,30 +240,39 @@ onEnd(ihook) {
 ; Win+space to activate.
 ;
 ; #space::  
-CapsLock:: 
+$CapsLock:: 
 ShowSwitcher() {
   global
-  Thread, NoTimers
-  ihook.Stop()
-  ihook.Start()
-  search := ""
-  FadeShow()
-  browserTabObj := ParseBrowserWindows()
-  RefreshWindowList()
-  WinSet, Transparent, 225, ahk_id %switcher_id%
-  WinActivate, ahk_id %switcher_id%
-  WinGetPos, , , w, h, ahk_id %switcher_id%
-  WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %switcher_id%
-  WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
-  If hideWhenFocusLost
-    SetTimer, HideTimer, 10
+  if !WinActive("ahk_id" switcher_id) {
+    Thread, NoTimers
+    ihook.Start()
+    FadeShow()
+    browserTabObj := ParseBrowserWindows()
+    RefreshWindowList()
+    WinSet, Transparent, 225, ahk_id %switcher_id%
+    WinActivate, ahk_id %switcher_id%
+    WinGetPos, , , w, h, ahk_id %switcher_id%
+    WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %switcher_id%
+    WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
+    If hideWhenFocusLost
+      SetTimer, HideTimer, 10
+  } else {
+    clearInput()
+  }
 }
 
-tooltipOff:
-  ToolTip
-Return
+clearInput() {
+  global
+  ihook.Stop()
+  callRefresh()
+  ihook.Start()
+}
 
-#If WinActive("ahk_id" switcher_id)
+tooltipOff() {
+  ToolTip
+}
+
+#If WinExist("ahk_id" switcher_id)
 ; Enter::       ; Activate window
 ; Escape::      ; Close window
 ; ^[::          ; ''
@@ -269,38 +280,39 @@ Return
 ; ^Backspace::  ; Clear text
 ; ^w::          ; ''
 ; ^h::          ; Backspace
-Down::        ; Next row
+*Down::        ; Next row
 Tab::         ; ''
 ^k::          ; ''
-Up::          ; Previous row
+*Up::          ; Previous row
 +Tab::        ; ''
 ^j::          ; ''
-PgUp::        ; Jump up 4 rows
+*PgUp::        ; Jump up 4 rows
 ^u::          ; ''
-PgDn::        ; Jump down 4 rows
+*PgDn::        ; Jump down 4 rows
 ^d::          ; ''
-^Home::       ; Jump to top
-^End::        ; Jump to bottom
+*Home::       ; Jump to top
+*End::        ; Jump to bottom
 !F4::         ; Quit
+KeyHandler() {
 ; ~Delete::
 ; ~Backspace::
   SetKeyDelay, -1
   Switch A_ThisHotkey {
-    Case "Enter": ActivateWindow()
-    Case "Escape", "^[", "^q": FadeHide() ;WinHide, ahk_id %switcher_id%
-    Case "^Home": LV_ScrollTop()
-    Case "^End": LV_ScrollBottom()
+    ; Case "Enter": ActivateWindow()
+    ; Case "Escape", "^[", "^q": FadeHide() ;WinHide, ahk_id %switcher_id%
+    Case "*Home": LV_ScrollTop()
+    Case "*End": LV_ScrollBottom()
     Case "!F4": ExitApp 
-    Case "^h": ControlSend, Edit1, {Backspace}, ahk_id %switcher_id%
-  Case "~Delete", "~Backspace", "^Backspace", "^w":
-    If (SubStr(search, 1, 1) != "?"
-        && DefaultTCSearch != "?"
-    && ((windows.MaxIndex() < 1 && LV_GetCount() > 1) || LV_GetCount() = 1))
-    GuiControl, , Edit1,
-    Else If (A_ThisHotkey = "^Backspace" || A_ThisHotkey = "^w")
-      ControlSend, Edit1, ^+{left}{Backspace}, ahk_id %switcher_id%
-  Case "Tab", "+Tab", "Up", "Down", "PgUp", "PgDn", "^k", "^j", "^u", "^d":
-    page := A_ThisHotkey ~= "^(Pg|\^[ud])"
+    ; Case "^h": ControlSend, Edit1, {Backspace}, ahk_id %switcher_id%
+  ; Case "~Delete", "~Backspace", "^Backspace", "^w":
+  ;   If (SubStr(search, 1, 1) != "?"
+  ;       && DefaultTCSearch != "?"
+  ;   && ((windows.MaxIndex() < 1 && LV_GetCount() > 1) || LV_GetCount() = 1))
+    ; GuiControl, , Edit1,
+    ; Else If (A_ThisHotkey = "^Backspace" || A_ThisHotkey = "^w")
+    ;   ControlSend, Edit1, ^+{left}{Backspace}, ahk_id %switcher_id%
+  Case "Tab", "+Tab", "*Up", "*Down", "*PgUp", "*PgDn", "^k", "^j", "^u", "^d":
+    page := A_ThisHotkey ~= "^(\*Pg|\^[ud])"
     row := LV_GetNext()
     jump := page ? 4 : 1
     If (row = 0)
@@ -319,23 +331,23 @@ PgDn::        ; Jump down 4 rows
       LV_ScrollTop(row)
     }
   }
-  Return
+}
 
 WheelDown::
 LV_ScrollDown() {
   if (LV_VisibleRows().2 < LV_GetCount())
     sendmessage, 0x115, 1, 0,, ahk_id %hlv%
 }
-return
 
 WheelUp::
 LV_ScrollUp() {
   if (LV_VisibleRows().1 > 0)
     sendmessage, 0x115, 0, 0,, ahk_id %hlv%
 }
-return  
 
 ~LButton Up::
+LButtonUp() {
+  global
   If isResizing {
     Resize()
     SetTimer, % SaveTimer, -500 
@@ -343,45 +355,11 @@ return
     isResizing := 0
     DllCall("ReleaseCapture")
   }
-return
+}
+
 #if
 
-LV_ScrollBottom(row := "") {
-  totalRows := LV_GetCount()
-  if !row
-    row := totalRows
-  loop {
-    lastVisibleRow := LV_VisibleRows().2
-    if (lastVisibleRow >= row || A_Index > totalRows)
-      break
-    sendmessage, 0x115, 1, 0,, ahk_id %hlv%
-  } 
-  LV_Modify(row, "Select Focus")
-}
 
-LV_ScrollTop(row := "") {
-  totalRows := LV_GetCount()
-  if !row
-    row := 1
-  loop {
-    firstVisibleRow := LV_VisibleRows().1
-    if (firstVisibleRow <= row - 1 || A_Index > totalRows)
-      break
-    sendmessage, 0x115, 0, 0,, ahk_id %hlv%
-  } 
-  LV_Modify(row, "Select Focus")
-}
-
-LV_VisibleRows() {
-  global hlv
-  static LVM_GETTOPINDEX = 4135		; gets the first visible row
-  , LVM_GETCOUNTPERPAGE = 4136	; gets number of visible rows
-    SendMessage, LVM_GETCOUNTPERPAGE, 0, 0, , ahk_id %hLV%
-    LV_NumOfRows := ErrorLevel	; get number of visible rows
-    SendMessage, LVM_GETTOPINDEX, 0, 0, , ahk_id %hLV%
-    LV_topIndex := ErrorLevel	; get first visible row
-  return [LV_topIndex, LV_topIndex + LV_NumOfRows, LV_NumOfRows] ; [Top row, last row, total visible]
-}
 
 SaveTimer() {
   global switcher_id, gui_pos
@@ -391,12 +369,12 @@ SaveTimer() {
 }
 
 ; Hides the UI if it loses focus
-HideTimer:
+HideTimer() {
   If !WinActive("ahk_id" switcher_id) {
     FadeHide()
     SetTimer, HideTimer, Off
   }
-Return
+}
 
 Quit() {
   WinShow, ahk_id %switcher_id%
@@ -407,11 +385,11 @@ Quit() {
 ;
 ; Handle mouse click events on the listview
 ;
-ListViewClick:
+ListViewFunc() {
   if (A_GuiControlEvent = "DoubleClick") {
-    ActivateWindow()
+   ActivateWindow()
   }
-return
+} 
 
 IncludedIn(needle,haystack) {
   for i, e in needle {
@@ -438,6 +416,8 @@ GetAllWindows() {
 ParseAllWindows() {
   global switcher_id, filters 
   windows := Object()
+  vivaldi_pushed := false
+  chrome_pushed := false
   top := DllCall("GetTopWindow", "Ptr","")
   for _, next in GetAllWindows() {
     WinGetTitle, title, % "ahk_id" next
@@ -445,9 +425,11 @@ ParseAllWindows() {
       continue
     if title {
         procName := GetProcessName(next)
-      if (procName = "vivaldi") {
+      if (procName = "vivaldi" && !vivaldi_pushed) {
+        vivaldi_pushed := true
         windows.Push(browserTabObj.vivaldi*)
-      } else if (procName = "chrome") {
+      } else if (procName = "chrome" && !chrome_pushed) {
+        chrome_pushed := true
         windows.Push(browserTabObj.chrome*)
       } else if (procName = "firefox") {
         windows.Push(browserTabObj.firefox*)
@@ -534,7 +516,8 @@ RefreshWindowList(search := "") {
       RegExMatch(OutDir, "\\(\w+)$", folder)
       allwindows.Push({"procname":folder1
                       ,"title":e.fileName . (!RegExMatch(OutExt,"txt|lnk") ? "." OutExt : "" )
-                      ,"path":e.path})
+                      ,"path":e.path
+                      ,"id": e.path})
     }
   }
   windows := !!search ? filterWindows(allwindows, search) : allwindows
@@ -617,6 +600,7 @@ DrawListView(windows, startFrom := 0) {
       row_num++
     }
   }
+  ListLines, Off
   LV_Modify(1, "Select Focus")
   loop % LV_GetCount() {
     LV_GetText(r,A_Index,3)
@@ -625,14 +609,15 @@ DrawListView(windows, startFrom := 0) {
       break
     }
   }
+  ListLines, On
   LV_ModifyCol(1,compact ? 50 : 70)
   LV_ModifyCol(2,110)
   GuiControl, +Redraw, list
 }
 
 generateIconList(windows) {
-  global compact
-  static IconArray := {}
+  global compact, fileList
+  static IconArray := Object()
   , WS_EX_TOOLWINDOW = 0x80
   , WS_EX_APPWINDOW = 0x40000
   , GW_OWNER = 4
@@ -642,7 +627,6 @@ generateIconList(windows) {
   , ICON_SMALL2 := 2
   , ICON_SMALL := 0
   iconCount = 0
-  tempArray := {}
   imageListID := IL_Create(windows.Count(), 1, compact ? 0 : 1)
     For idx, window in windows {
       wid := window.id
@@ -662,21 +646,16 @@ generateIconList(windows) {
         sfi_size := A_PtrSize + 8 + (A_IsUnicode ? 680 : 340)
         VarSetCapacity(sfi, sfi_size)
         SplitPath, FileName,,, FileExt ; Get the file's extension.
-        for i, e in fileList {
-          if (e.path = window.path) {
-            fileObj := fileList[i]
-            iconHandle := fileObj.icon
+        for _, hex in [0x100, 0x101] {
+          found := DllCall("Shell32\SHGetFileInfo" . (A_IsUnicode ? "W":"A"), "Str", FileName
+          , "UInt", 0, "Ptr", &sfi, "UInt", sfi_size, "UInt", hex)
+          if found
             Break
-          }
-        }
-        If !iconHandle {
-          if !DllCall("Shell32\SHGetFileInfo" . (A_IsUnicode ? "W":"A"), "Str", FileName
-          , "UInt", 0, "Ptr", &sfi, "UInt", sfi_size, "UInt", 0x101) { ; 0x101 is SHGFI_ICON+SHGFI_SMALLICON
-            IconNumber := 9999999 ; Set it out of bounds to display a blank icon.
-          } else {
-            iconHandle := NumGet(sfi, 0)
-            fileObj.icon := iconHandle
-          }
+        }  ; 0x101 is SHGFI_ICON+SHGFI_SMALLICON
+        if !found {
+          IconNumber := 9999999 ; Set it out of bounds to display a blank icon.
+        } else {
+          iconHandle := NumGet(sfi, 0)
         }
         if (iconHandle != 0)
           iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, iconHandle) + 1
@@ -796,7 +775,7 @@ WM_LBUTTONDOWN() {
 
   global isResizing, resizeBorder, Windows
   static topBorder := 29
-
+  ListLines, Off
   if !A_Gui
     return
 
@@ -825,7 +804,7 @@ WM_SETCURSOR() {
   , SPI_SETCURSORS := 0x57
   , borderOffset := 0
   , LastCursor, CursorHandle
-
+  ListLines, Off
   if !A_Gui
     return
 
@@ -880,14 +859,12 @@ InRange(val, start, count) {
 }
 
 WM_MOUSEMOVE() {
-
   global resizeBorder, isResizing, borderOffset
   static minWidth := 200
   , minHeight := 150
-
+  ListLines, Off
   if !A_Gui
     return
-  ListLines, On
   WinGetPos, winX, winY, winWidth, winHeight, % "ahk_id" switcher_id
   CoordMode, Mouse, Screen
   MouseGetPos, mouseX, mouseY
@@ -955,4 +932,53 @@ Resize(width := "", height := "") {
 GetProcessName(wid) {
   WinGet, name, ProcessName, ahk_id %wid%
   return StrSplit(name, ".").1
+}
+
+LV_ScrollBottom(row := "") {
+  try {
+    totalRows := LV_GetCount()
+    if !row
+      row := totalRows
+    loop {
+      lastVisibleRow := LV_VisibleRows().2
+      if (lastVisibleRow >= row || A_Index > totalRows)
+        break
+      sendmessage, 0x115, 1, 0,, ahk_id %hlv%
+    } 
+    LV_Modify(row, "Select Focus")
+  } catch e {
+    OutputDebug, % e
+  }
+}
+
+LV_ScrollTop(row := "") {
+  try {
+    totalRows := LV_GetCount()
+    if !row
+      row := 1
+    loop {
+      firstVisibleRow := LV_VisibleRows().1
+      if (firstVisibleRow <= row - 1 || A_Index > totalRows)
+        break
+      sendmessage, 0x115, 0, 0,, ahk_id %hlv%
+    } 
+    LV_Modify(row, "Select Focus")
+  } catch e {
+    OutputDebug, % e
+  }
+}
+
+LV_VisibleRows() {
+  global hlv
+  static LVM_GETTOPINDEX = 4135		; gets the first visible row
+  , LVM_GETCOUNTPERPAGE = 4136	; gets number of visible rows
+  try {
+    SendMessage, LVM_GETCOUNTPERPAGE, 0, 0, , ahk_id %hLV%
+    LV_NumOfRows := ErrorLevel	; get number of visible rows
+    SendMessage, LVM_GETTOPINDEX, 0, 0, , ahk_id %hLV%
+    LV_topIndex := ErrorLevel	; get first visible row
+    return [LV_topIndex, LV_topIndex + LV_NumOfRows, LV_NumOfRows] ; [Top row, last row, total visible]
+  } catch e {
+    OutputDebug, % e
+  }
 }
