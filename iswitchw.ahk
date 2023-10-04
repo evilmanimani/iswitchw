@@ -485,10 +485,12 @@ filterWindows(allwindows, search) {
       result.Push(e)
     }
   }
-  if (result.Length() == 0)
-    result := last_windows
   resultLen := result.Count()
   updateSearchStringColour(resultLen, lastResultLen)
+  if (resultLen == 0) {
+    result := last_windows
+    resultLen := result.Count()
+  }
   lastResultLen := resultLen > 0 ? resultLen : lastResultLen
   last_windows := result
   return result
