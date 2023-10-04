@@ -221,6 +221,7 @@ onChar(ihook, char) {
 
 callRefresh(search := "") {
   GuiControl, , Edit1, % search
+  ; RefreshWindowList(search)
   func := Func("RefreshWindowList").bind(search)
   SetTimer, % func, -1
 }
@@ -265,6 +266,8 @@ clearInput() {
   global
   ihook.Stop()
   callRefresh()
+  Sleep 50
+  LV_Modify(1, "Select Focus Vis")
   ihook.Start()
 }
 
@@ -493,7 +496,7 @@ filterWindows(allwindows, search) {
   }
   lastResultLen := resultLen > 0 ? resultLen : lastResultLen
   last_windows := result
-  return result
+  return [newSearch, result]
 }
 
 updateSearchStringColour(len, last_len) {
@@ -511,7 +514,7 @@ updateSearchStringColour(len, last_len) {
 
 RefreshWindowList(search := "") {
   global fileList, refreshEveryKeystroke, activateOnlyMatch
-  static allwindows := ParseAllWindows()
+  static allwindows := ParseAllWindows(), iconArray := Object()
   if !search {
     allwindows := ParseAllWindows()
     for _, e in fileList {
@@ -524,17 +527,22 @@ RefreshWindowList(search := "") {
                       ,"id": e.path})
     }
   }
-  windows := !!search ? filterWindows(allwindows, search) : allwindows
+  result := !!search ? filterWindows(allwindows, search) : [1, allwindows]
+  newSearch := result.1
+  windows := result.2
   windows_dict := {}
   for _, o in windows {
     windows_dict[o.id] := o
   }
   ; OutputDebug, % "Allwindows count: " allwindows.MaxIndex() " | windows count: " windows.MaxIndex() "`n"
-  If (windows.Count() = 1 && activateOnlyMatch) {
+  windowLen := windows.Count()
+  if (newSearch || iconArray.Count() == 0)
+    iconArray := generateIconList(windows)
+  If (windowLen = 1 && activateOnlyMatch) {
     ActivateWindow(1, windows_dict)
-  } else {
+  } else if (windowLen > 0) {
     ActivateWindow("", windows_dict) ; update function with current windows list
-    func := Func("DrawListView").Bind(windows)
+    func := Func("DrawListView").Bind(windows, iconArray)
     SetTimer, % func, -1
   }
   return windows
@@ -584,12 +592,8 @@ ActivateWindow(rowNum := "", updateWindows := false) {
 ;
 ; Add window list to listview
 ;
-DrawListView(windows, startFrom := 0) {
+DrawListView(windows, iconArray) {
   Global switcher_id, fileList, hlv, compact
-  if windows.Count() = 0 {
-    return
-  }
-  iconArray := generateIconList(windows)
   LV_GetText(selectedRow, LV_GetNext(),3)
   GuiControl, -Redraw, list
   LV_Delete()
