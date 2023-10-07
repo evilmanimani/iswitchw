@@ -27,7 +27,7 @@
 ;
 
 ; Use small icons in the listview
-Global compact := false
+Global compact := true
 
 ; A bit of a hack, but this 'hides' the scroll bars, rather the listview is    
 ; sized out of bounds, you'll still be able to use the scroll wheel or arrows
@@ -45,7 +45,7 @@ Global hideScrollBars := false
 ;   * - for srch    
 ;   < - for simularity
 ; recommended '*' for fast fuzzy searching; you can set one of the other search modes as default here instead if destired
-DefaultTCSearch := "<" 
+DefaultTCSearch := "*" 
 
 ; Activate the window if it's the only match
 activateOnlyMatch := false
@@ -62,7 +62,7 @@ filters := []
 ; Add folders containing files or shortcuts you'd like to show in the list.
 ; Enter new paths as an array
 ; todo: show file extensions/path in the list, etc.
-shortcutFolders := []
+shortcutFolders := [] ;["C:\Users\mcleo\AppData\Roaming\Microsoft\Windows\Start Menu\Programs"]
 ; Set this to true to update the list of windows every time the search is
 ; updated. This is usually not necessary and creates additional overhead, so
 ; it is disabled by default. 
@@ -114,13 +114,35 @@ OnMessage(0x201, "WM_LBUTTONDOWN")
 fileList := []
 if IsObject(shortcutFolders) {
   for i, e in shortcutFolders
-    Loop, Files, % e "\*"	
+    Loop, Files, % e "\*", R	
     fileList.Push({"fileName":RegExReplace(A_LoopFileName,"\.\w{3}$"),"path":A_LoopFileFullPath})
 }
 ; -- still working on options
 ; Menu, Context, Add, Options, MenuHandler
 Menu, Context, Add, Exit, MenuHandler
-
+/* 
+Gui, Settings:Margin, 4, 5
+Gui, Settings: +LastFound +AlwaysOnTop -Caption +ToolWindow
+Gui, Settings:Color, black,0x2e2d2d
+Gui, Settings:Font, s8 cEEE8D5 Italic
+Gui, Settings:Add, Text, x5 y5, % "FinesseMini v" version "`nby Duncan McLeod"
+Gui, Settings:Font, s8 Norm, Segoe MDL2 Assets
+Gui, Settings:Add, Text, x5 y5 vvSettingsGuiClose gSettingsGuiClose, % Chr(0xE106)
+Gui, Settings:Font, , Segoe UI
+Gui, Settings:Add, Edit, x5 h15 w40 Number Limit4 hwndhTime1 vlogintimeValue -E0x200
+SendMessage 0x1501, 1, "HHMM",, % "ahk_id" hTime1 ; EM_SETCUEBANNER
+Gui, Settings:Add, Text, Section x55 yp, Login time (24H)
+Gui, Settings:Add, Edit, x5 h15 w40 Number Limit4 hwndhTime2 vlogouttimeValue -E0x200
+SendMessage 0x1501, 1, "HHMM",, % "ahk_id" hTime2 ; EM_SETCUEBANNER
+Gui, Settings:Add, Text, xs yp, Logout time (24H)
+Gui, Settings:Add, Edit, x5 h15 w30 Number Limit2 hwndhTime3 vbreaktotalValue -E0x200
+SendMessage 0x1501, 1, "MM",, % "ahk_id" hTime3 ; EM_SETCUEBANNER
+Gui, Settings:Add, Text, xs yp, Break allotment
+Gui, Settings:Font, Underline
+Gui, Settings:Add, Text, x5 gFinesseStatus, Finesse status
+Gui, Settings:Font, Norm
+Gui, Settings:Add, Button, hwndhsaveBtn vvsaveBtn gsaveSettings x5 yp w20, Save
+ */
 Gui, +LastFound +AlwaysOnTop +ToolWindow -Caption -Resize -DPIScale +Hwndswitcher_id
 Gui, Color, black, 191919
 Gui, Margin, 8, 10
@@ -160,7 +182,6 @@ ihook.OnChar := Func("onChar")
 ihook.onKeyDown := Func("onKeyDown")
 ihook.NotifyNonText := true
 ihook.OnEnd := Func("onEnd")
-; SetTimer, browserTimer, 3000
 Return
 
 #Include lib\Accv2.ahk
@@ -244,6 +265,7 @@ onEnd(ihook) {
 $CapsLock:: 
 ShowSwitcher() {
   global
+  Thread, NoTimers
   if !WinActive("ahk_id" switcher_id) {
     Thread, NoTimers
     ihook.Start()
@@ -436,12 +458,50 @@ ParseAllWindows() {
         windows.Push(browserTabObj.chrome*)
       } else if (procName = "firefox") {
         windows.Push(browserTabObj.firefox*)
+      ; } else if (procName = "Code") {
+      ;   if (obj := getVSCodeTabs(next, "get")) {
+      ;     windows.Push(obj*)
+      ;   } else {
+      ;     getVSCodeTabs(next, "find")
+      ;     func := Func("RefreshWindowList")
+      ;     SetTimer, % func, -5000
+      ;     windows.Push({ "id": next, "title": title " (loading tabs)", "procName": procName })
+        ; }
       } else {
         windows.Push({ "id": next, "title": title, "procName": procName })
       }
     }
   }
   return windows
+}
+
+getVSCodeTabs(hwnd, mode := "set", setObj := 0) {
+  static vsCodeWindows := Object()
+  var := "v" hwnd
+  if (mode = "get" && vsCodeWindows.HasKey(var) && vsCodeWindows[var].Count() > 0) {
+    return vsCodeWindows[var]
+  } else if (mode := "set" && IsObject(setObj)) {
+    vsCodeWindows[var] := setObj
+  } else if (mode := "find") {
+    func := Func("findVSCodeTabs").Bind(hwnd)
+    SetTimer, % func, -1
+  }
+}
+
+findVSCodeTabs(hwnd) {
+  tabBarPath := AccMatchTextAll(hwnd,{name: "Editor actions", role:22})
+  tabBarPath := RegExReplace(tabBarPath, "\d$", "1")
+  WinGetTitle, title, % "ahk_id" hwnd
+  tabBar := Acc_Get("Object",tabBarPath,,title)
+  children := Acc_Children(tabBar)
+  result := Object()
+  for i, child in children {
+    name := child.accName(0)
+    if (name) {
+      result.Push({"id": hwnd, "title": name, "procName": "VSCode tab", "accPath": Format("{}.{}", tabBarPath, i)})
+    }
+  }
+  getVSCodeTabs(hwnd, "set", result)
 }
 
 ParseBrowserWindows() {
@@ -477,12 +537,12 @@ filterWindows(allwindows, search) {
     || DefaultTCSearch = "?" 
     || SubStr(search, 1, 1) = "?")
   toFilter := newSearch ? allwindows : last_windows
-  if (newSearch)
+ if (newSearch)
     lastResultLen = 0
   lastSearch := search
   result := []
   for i, e in toFilter {
-    str := e.url " " e.title " " e.procName
+    str := Trim(e.url " " e.title " " e.procName)
     match := TCMatch(str,search) 
     if !search || (match && e.HasKey("icon")) {
       result.Push(e)
@@ -517,15 +577,15 @@ RefreshWindowList(search := "") {
   static allwindows := ParseAllWindows(), iconArray := Object()
   if !search {
     allwindows := ParseAllWindows()
-    for _, e in fileList {
-      path := e.path 
-      SplitPath, path, OutFileName, OutDir, OutExt, OutNameNoExt, OutDrive
-      RegExMatch(OutDir, "\\(\w+)$", folder)
-      allwindows.Push({"procname":folder1
-                      ,"title":e.fileName . (!RegExMatch(OutExt,"txt|lnk") ? "." OutExt : "" )
-                      ,"path":e.path
-                      ,"id": e.path})
-    }
+  }
+  for _, e in fileList {
+    path := e.path 
+    SplitPath, path, OutFileName, OutDir, OutExt, OutNameNoExt, OutDrive
+    RegExMatch(OutDir, "\\(\w+)$", folder)
+    allwindows.Push({"procname":folder1
+                    ,"title":e.fileName . (!RegExMatch(OutExt,"txt|lnk") ? "." OutExt : "" )
+                    ,"path":e.path
+                    ,"id": e.path})
   }
   result := !!search ? filterWindows(allwindows, search) : [1, allwindows]
   newSearch := result.1
@@ -571,13 +631,13 @@ ActivateWindow(rowNum := "", updateWindows := false) {
   If window.HasKey("path") {
     Run, % """" window.path """" 
   } Else {
-    If (procName = "Vivaldi tab")
+    If (procName = "Vivaldi tab") {
       chromiumFocusTab(vivaldiDebugPort, title, id)
-    Else If (procName = "Chrome tab")
+    } Else If (procName = "Chrome tab") {
       chromiumFocusTab(chromeDebugPort, title, id)
-    Else If (procName = "Firefox tab")
+    } Else If (procName = "Firefox tab") {
       JEE_FirefoxFocusTabByNum(id,num, title)
-    Else If WinActive("ahk_id" id) {
+    } Else If WinActive("ahk_id" id) {
       WinGet, state, MinMax, ahk_id %id%
       if (state = -1) {
         WinRestore, ahk_id %id%
@@ -585,9 +645,15 @@ ActivateWindow(rowNum := "", updateWindows := false) {
     } else {
       WinActivate, ahk_id %id%
     }
+    If (procName = "VSCode tab") {
+      Acc_Get("Object",window.accPath,,"ahk_id" id).accDoDefaultAction(0)
+    }
   }
 }
 
+VSCodeFocusTab(id, accPath) {
+
+}
 ;------------------------------------------------------------5----------
 ;
 ; Add window list to listview
@@ -601,7 +667,7 @@ DrawListView(windows, iconArray) {
   for i, e in windows { 
     if (i < startFrom)
       continue
-    if iconArray.HasKey(e.id) {
+    if iconArray.HasKey(Format("{:s}",e.id)) {
       icon := iconArray[e.id].icon
       arr := [icon, row_num, e.procName, e.title, e.id]
       LV_Add(arr*)
@@ -716,7 +782,7 @@ generateIconList(windows) {
         removedRows.Push(wid)
       } else {
         iconCount+=1
-        IconArray[window.id] := {"icon":"Icon" . iconNumber, "num": iconNumber} 
+        IconArray[Format("{:s}", window.id)] := {"icon":"Icon" . iconNumber, "num": iconNumber} 
       }
     }
     LV_SetImageList(imageListID, 1)

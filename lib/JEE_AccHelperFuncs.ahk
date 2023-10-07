@@ -2,14 +2,32 @@
 ; SetBatchLines, -1
 ; #Include Accv2.ahk
 ; ; Example
-; q::
 ; hwnd := "ahk_exe Code.exe"
-; tabBarPath := AccMatchTextAll(hwnd,{name: "Editor actions", role:22})
-; tabBarPath := 
-; children := Acc_Children(Acc_Get("Object",tabBarPath,,hwnd))
-;  ; Get the current value rather than the cached value
-; MsgBox, % tabBarPath "`n" children[1].accName(0) "`n" children[1].accRole(0)
+; z::Acc_Get("Object","4.1.1.2.1.1.2.1.1.1.1.2.2.1.2.2.1.2.1.1.2.2.1.1.1.1.2.1.1.1.1.4",,WinExist("ahk_exe Code.exe")).accDoDefaultAction(0)
+; getVSCodeTabs() {
+;   static
 
+; }
+; q::
+
+; MsgBox, % str
+; return
+; MsgBox, % tabBarPath "`n" children[2].accName(0) "`n" children[2].accRole(0)
+/*
+---------------------------
+JEE_AccHelperFuncs.ahk
+---------------------------
+AccV2.ahk	4.1.1.2.1.1.2.1.1.1.1.2.2.1.2.2.1.2.1.1.2.2.1.1.1.1.2.1.1.1.1.1
+Untitled-2	4.1.1.2.1.1.2.1.1.1.1.2.2.1.2.2.1.2.1.1.2.2.1.1.1.1.2.1.1.1.1.2
+Untitled-1	4.1.1.2.1.1.2.1.1.1.1.2.2.1.2.2.1.2.1.1.2.2.1.1.1.1.2.1.1.1.1.3
+iswitchw.ahk	4.1.1.2.1.1.2.1.1.1.1.2.2.1.2.2.1.2.1.1.2.2.1.1.1.1.2.1.1.1.1.4
+JEE_AccHelperFuncs.ahk	4.1.1.2.1.1.2.1.1.1.1.2.2.1.2.2.1.2.1.1.2.2.1.1.1.1.2.1.1.1.1.5
+
+---------------------------
+OK   
+---------------------------
+
+*/
 ; ; 2.1.2.2.1.2.1.1.2.1.1.1.1.1.2.1.1.1.1
 ; ; 4.1.1.2.1.1.2.1.1.1.1.2.2.1.2.1.1.1
 ; ; hwnd := "ahk_exe chrome.exe"
@@ -27,9 +45,12 @@ AccMatchTextAll(hwnd, matchList, get := "path", regex := 0, reload := 0) {
   static
   if !IsObject(foundPaths)
       foundPaths := Object()
-  nWindow := WinExist(hwnd)
-  , matchStr := ""
-  , idx := 0
+  if hwnd is number
+    nWindow := hwnd
+  else
+    nWindow := WinExist(hwnd)
+  matchStr := ""
+  idx := 0
   if (!IsObject(%nWindow%) || reload = 1)
       %nWindow% := JEE_AccGetTextAll(nWindow, , ,"o")
   for k, v in matchList {
@@ -43,7 +64,7 @@ AccMatchTextAll(hwnd, matchList, get := "path", regex := 0, reload := 0) {
   for i, e in %nWindow% {
       found := 0
       for k, v in e {
-          if (v <> "" && matchList.HasKey(k))
+          if (v != "" && matchList.HasKey(k))
               if (regex = 0 && InStr(v,matchlist[k])
               || (regex = 1 && RegExMatch(v, matchList[k])))
                   found++
