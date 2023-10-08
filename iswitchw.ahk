@@ -581,7 +581,7 @@ filterWindows(allwindows, search) {
   result := []
   filterCount := toFilter.Count()
   for i, e in toFilter {
-    str := Trim(e.url " " e.title " " e.procName)
+    str := Trim(e.procName " " e.title " " e.url)
     match := TCMatch(str,search) 
     if !search || (match && e.HasKey("icon")) {
       if (search && filterCount <= 100) { ; only score/sort if there's less than 100 items
