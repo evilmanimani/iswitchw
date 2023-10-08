@@ -51,7 +51,7 @@ DefaultTCSearch := "*"
 activateOnlyMatch := false
 
 ; Hides the UI when focus is lost!
-hideWhenFocusLost := true
+hideWhenFocusLost := false
 
 ; Window titles containing any of the listed substrings are filtered out from results
 ; useful for things like  hiding improperly configured tool windows or screen
@@ -63,7 +63,11 @@ filters := []
 ; Enter new paths as an array
 ; todo: show file extensions/path in the list, etc.
 ; shortCutFolders := []
-shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon]
+; shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon]
+shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, "C:\Users\mcleo\OneDrive\Documents", A_DesktopCommon]
+
+recurse_limit := 2
+
 ; Set this to true to update the list of windows every time the search is
 ; updated. This is usually not necessary and creates additional overhead, so
 ; it is disabled by default. 
@@ -93,7 +97,7 @@ vivaldiDebugPort := 5000
 ;
 ;----------------------------------------------------------------------
 
-global initialLoadComplete := false, browserTabObj, switcher_id, debounced := false, debounce_interval := 100 ;, hlv
+global initialLoadComplete := false, browserTabObj, switcher_id, debounced := false, refresh_queued := false, debounce_interval := 100 ;, hlv
 
 #SingleInstance force
 #WinActivateForce
@@ -113,12 +117,33 @@ OnMessage(0x200, "WM_MOUSEMOVE")
 OnMessage(0x201, "WM_LBUTTONDOWN")
 
 fileList := []
+recurse_limit := 2
 if IsObject(shortcutFolders) {
-  for i, e in shortcutFolders
-    Loop, Files, % e "\*", R	
-    fileList.Push({"fileName":RegExReplace(A_LoopFileName,"\.\w{3}$"),"path":A_LoopFileFullPath})
+  for i, e in shortcutFolders {
+    rlimit := InStr(e, "Documents") ? 2 : recurse_limit
+    StrReplace(e, "\", "\", parent_dir_count)
+    Loop, Files, % e "\*", R
+    {
+      StrReplace(A_LoopFilePath, "\", "\", dir_count)
+      if ( dir_count - parent_dir_count > rlimit
+        || !(A_LoopFileName ~= "^.*\.(jpe?g|gif|png|docx?|xls|exe|txt|lnk)$"))
+        continue
+      fileList.Push({"fileName":A_LoopFileName,"path":A_LoopFileFullPath})
+      ; fileList.Push({"fileName":RegExReplace(A_LoopFileName,"\.\w{3}$"),"path":A_LoopFileFullPath})
+    }
+  }
 }
-
+temp := []
+for _, e in fileList {
+  path := e.path 
+  SplitPath, path, OutFileName, OutDir, OutExt, OutNameNoExt, OutDrive
+  RegExMatch(OutDir, "\\(\w+)$", folder)
+  temp.Push({"procname":folder1
+                  ,"title": OutExt == "lnk" ? OutNameNoExt  : OutFileName
+                  ,"path":e.path
+                  ,"id": e.path})
+}
+fileList := temp
 
 ; -- still working on options
 ; Menu, Context, Add, Options, MenuHandler
@@ -127,25 +152,7 @@ Menu, Context, Add, Exit, MenuHandler
 Gui, Settings:Margin, 4, 5
 Gui, Settings: +LastFound +AlwaysOnTop -Caption +ToolWindow
 Gui, Settings:Color, black,0x2e2d2d
-Gui, Settings:Font, s8 cEEE8D5 Italic
-Gui, Settings:Add, Text, x5 y5, % "FinesseMini v" version "`nby Duncan McLeod"
-Gui, Settings:Font, s8 Norm, Segoe MDL2 Assets
-Gui, Settings:Add, Text, x5 y5 vvSettingsGuiClose gSettingsGuiClose, % Chr(0xE106)
-Gui, Settings:Font, , Segoe UI
-Gui, Settings:Add, Edit, x5 h15 w40 Number Limit4 hwndhTime1 vlogintimeValue -E0x200
-SendMessage 0x1501, 1, "HHMM",, % "ahk_id" hTime1 ; EM_SETCUEBANNER
-Gui, Settings:Add, Text, Section x55 yp, Login time (24H)
-Gui, Settings:Add, Edit, x5 h15 w40 Number Limit4 hwndhTime2 vlogouttimeValue -E0x200
-SendMessage 0x1501, 1, "HHMM",, % "ahk_id" hTime2 ; EM_SETCUEBANNER
-Gui, Settings:Add, Text, xs yp, Logout time (24H)
-Gui, Settings:Add, Edit, x5 h15 w30 Number Limit2 hwndhTime3 vbreaktotalValue -E0x200
-SendMessage 0x1501, 1, "MM",, % "ahk_id" hTime3 ; EM_SETCUEBANNER
-Gui, Settings:Add, Text, xs yp, Break allotment
-Gui, Settings:Font, Underline
-Gui, Settings:Add, Text, x5 gFinesseStatus, Finesse status
-Gui, Settings:Font, Norm
-Gui, Settings:Add, Button, hwndhsaveBtn vvsaveBtn gsaveSettings x5 yp w20, Save
- */
+*/
 Gui, +LastFound +AlwaysOnTop +ToolWindow -Caption -Resize -DPIScale +Hwndswitcher_id
 Gui, Color, black, 191919
 Gui, Margin, 8, 10
@@ -154,12 +161,13 @@ Gui, Add, Text, ym, % Chr(0xE721)
 Gui, Font, s12 cEEE8D5, Segoe UI
 Gui, Add, Text, w420 R1 x+10 vEdit1 ym-2 ;-E0x200,
 Gui, Font, s10 cEEE8D5, Lucida Sans Typewriter
-Gui, Add, Text, w80 x+5 vCurrentRow ym -E0x200,
-; Gui, Add, ListView,  x9 y+8 w490 h500 -Hdr -Multi Count10 vlist gListViewFunc, index|title|proc|tab
+Gui, Add, Text, w80 Right vCurrentRow ym -E0x200,
 Gui, Font, s10 cEEE8D5, Segoe UI
-Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+12 w490 h500 -Hdr -Multi Count10 vlist hwndHLV gListViewFunc AltSubmit +LV0x100 +LV0x10000 -E0x200", index|title|proc|tab
+Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+12 w490 h500 -Hdr -Multi Count10 vlist hwndHLV gListViewFunc AltSubmit +LV0x100 +LV0x10000 +LV0x20 -E0x200", index|title|proc|tab
+; listview styles: LV0x100 - flat scrollbars, LV0x10000 - double-buffering, LV0x20 - full row select, -E0x200 -  WS_EX_CLIENTEDGE (disabled)
 Gui, Show, , Window Switcher
-WinWaitActive, ahk_id %switcher_id%, , 1
+WinWait, ahk_id %switcher_id%, , 1
+WinSet, Transparent, 0, ahk_id %switcher_id%
 ; if gui_pos
 ;   SetWindowPosition(switcher_id, StrSplit(gui_pos, A_Space)*)
 LV_ModifyCol(4,0)
@@ -177,13 +185,8 @@ for i, e in numkey {
     Hotkey, % "#" e, % KeyFunc
 }
 
-; Define hotstrings for selecting rows, by typing the number with a space after
-Loop 300 {
-  KeyFunc := Func("ActivateWindow").Bind(A_Index)
-  Hotkey, IfWinActive, % "ahk_id" switcher_id
-    Hotstring(":X:" A_Index , KeyFunc)
-}
 chromeTabObj := Object(), vivaldiTabObj := Object()
+; Progress, Param1 [, SubText, MainText, WinTitle, FontName]
 RefreshWindowList()
 global ihook
 ihook := InputHook("", "{Esc}{Enter}")
@@ -214,7 +217,6 @@ onKeyDown(ihook, vk, sc) {
   static backspace := 8 
   , ctrl_q := 81
   , ctrl_w := 87
-  ; , ctrl_h := 72
   , del := 46
   , lctrl := 162
   , rctrl := 163
@@ -223,7 +225,7 @@ onKeyDown(ihook, vk, sc) {
   clear := vk = backspace && (last_key = lctrl || last_key = rctrl)
     || vk = del
     || vk = ctrl_w
-  correct := vk = backspace ;|| vk = ctrl_h 
+  correct := vk = backspace 
   if (vk = ctrl_q) {
     ihook.Stop()
     FadeHide()
@@ -252,6 +254,10 @@ onChar(ihook, char) {
 
 debounce() {
   debounced := false
+  if (refresh_queued) {
+    RefreshWindowList()
+  }
+  refresh_queued := false
 }
 
 callRefresh(search := "") {
@@ -259,8 +265,11 @@ callRefresh(search := "") {
   GuiControl, , Edit1, % search
   if !search
     debounce_interval := 100
-  if debounced && search
+  if (debounced) {
+    if !search 
+      refresh_queued := true
     return
+  }
   debounced := true
   SetTimer, debounce, % -debounce_interval
   func := Func("RefreshWindowList").bind(search)
@@ -281,23 +290,18 @@ onEnd(ihook) {
 ;
 ; Win+space to activate.
 ;
-; #space::  
-$CapsLock:: 
+; #space::
+$CapsLock::
 ShowSwitcher() {
   global
   if !initialLoadComplete
     return
   Thread, NoTimers
-  if !WinActive("ahk_id" switcher_id) {
+  if !WinExist("ahk_id" switcher_id) {
     Thread, NoTimers
     browserTabObj := ParseBrowserWindows()
+    FadeGui("in")
     RefreshWindowList()
-    FadeShow()
-    WinSet, Transparent, 225, ahk_id %switcher_id%
-    WinActivate, ahk_id %switcher_id%
-    WinGetPos, , , w, h, ahk_id %switcher_id%
-    WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %switcher_id%
-    WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
     ihook.Start()
     If hideWhenFocusLost
       SetTimer, HideTimer, 10
@@ -340,12 +344,9 @@ Tab::         ; ''
 *End::        ; Jump to bottom
 !F4::         ; Quit
 KeyHandler() {
-; ~Delete::
-; ~Backspace::
   row_count := LV_GetCount()
   SetKeyDelay, -1
   Switch A_ThisHotkey {
-    ; Case "Enter": ActivateWindow() ; Case "Escape", "^[", "^q": FadeHide() ;WinHide, ahk_id %switcher_id%
     Case "*Home": 
       LV_Modify(1, "Select Vis")
     Case "*End":
@@ -368,27 +369,6 @@ KeyHandler() {
   }
 }
 
-; WheelDown::
-; LV_ScrollDown() {
-;   static EM_LINESCROLL := 0xB6
-;   lr := LV_VisibleRows().2
-;   rc := LV_GetCount()
-;   if (lr < rc) 
-;     PostMessage, EM_LINESCROLL, 0, 1, , ahk_id %hlv%
-;     ; postmessage, 0x115, 1, 0,, ahk_id %hlv%
-;   OutputDebug, % Format("Last visible row:{}, Row count:{}`n", lr, rc)
-; }
-
-; WheelUp::
-; LV_ScrollUp() {
-;   static EM_LINESCROLL := 0xB6
-;   fr := LV_VisibleRows().1
-;   if (fr > 0)
-;     PostMessage, EM_LINESCROLL, 0, -1, , ahk_id %hlv%
-;     ; postmessage, 0x115, 0, 0,, ahk_id %hlv%
-;   OutputDebug, % Format("First visible row:{}`n", fr)
-; }
-
 ~LButton Up::
 LButtonUp() {
   global
@@ -402,8 +382,6 @@ LButtonUp() {
 }
 
 #if
-
-
 
 SaveTimer() {
   global switcher_id, gui_pos
@@ -439,17 +417,18 @@ ListViewFunc() {
     LV_Modify(cr, "-Focus")
   } else if (A_GuiEvent = "I") {
     change_type := Errorlevel
-    ; OutputDebug, % change_type
     wc := allRowCount
     rc := LV_GetCount()
     cr := A_Eventinfo
     if (InStr(change_type, "S", true)) {
-      format_str := Format("[{{}: {1}{}}/{{}: {1}{}}]", StrLen(wc))
+      format_str := Format("{{}: {1}{}}/{{}: {1}{}}", StrLen(wc))
       GuiControl, , CurrentRow, % Format(format_str, cr, rc)
-      ; OutputDebug, % A_Eventinfo "`n"
+      ControlGetPos, x, , w, , Static3
+      right_edge := x + w
+      if right_edge > A_GuiWidth - 10 
+        GuiControl, Move, CurrentRow, % A_GuiWidth - 10 - w
+      
     }
-    ; if (InStr(change_type, "F", true)) {
-    ; }
   }
 } 
 
@@ -511,6 +490,7 @@ ParseAllWindows() {
   }
   return windows
 }
+
 /* 
 getVSCodeTabs(hwnd, mode := "set", setObj := 0) {
   static vsCodeWindows := Object()
@@ -541,6 +521,7 @@ findVSCodeTabs(hwnd) {
   getVSCodeTabs(hwnd, "set", result)
 }
 */
+
 ParseBrowserWindows() {
   global chromeDebugPort, vivaldiDebugPort
   obj := Object()
@@ -586,6 +567,8 @@ filterWindows(allwindows, search) {
     if !search || (match && e.HasKey("icon")) {
       if (search && filterCount <= 100) { ; only score/sort if there's less than 100 items
         score := stringsimilarity.compareTwoStrings(str, search)
+        if e.HasKey("path")
+         score -= 0.4, if (score < 0) score := 0 ; penalize files
         e.score := score
       }
       result.Push(e)
@@ -627,15 +610,7 @@ RefreshWindowList(search := "") {
     allwindows := ParseAllWindows()
     allRowCount := allwindows.Count() + fileList.Count()
   }
-  for _, e in fileList {
-    path := e.path 
-    SplitPath, path, OutFileName, OutDir, OutExt, OutNameNoExt, OutDrive
-    RegExMatch(OutDir, "\\(\w+)$", folder)
-    allwindows.Push({"procname":folder1
-                    ,"title":e.fileName . (!RegExMatch(OutExt,"txt|lnk") ? "." OutExt : "" )
-                    ,"path":e.path
-                    ,"id": e.path})
-  }
+  allwindows.Push(fileList*)
   result := !!search ? filterWindows(allwindows, search) : [1, allwindows]
   newSearch := result.1
   windows := result.2
@@ -671,7 +646,7 @@ ActivateWindow(rowNum := "", updateWindows := false) {
     return
   updateSearchStringColour(0,0)
   LV_GetText(wid, rowNum, 4)
-  WinHide, ahk_id %switcher_id%
+  FadeHide()
   window := windows[wid]
   procName := window.procName
   title := window.title
@@ -706,6 +681,8 @@ ActivateWindow(rowNum := "", updateWindows := false) {
 ;
 DrawListView(windows, iconArray) {
   Global switcher_id, fileList, hlv, compact
+  static max_width := 50 ; set max width for icon/number column, will adjust itself if needed
+  , LVM_GETCOLUMNWIDTH := 0x101d
   LV_GetText(selectedRow, LV_GetNext(),3)
   GuiControl, -Redraw, list
   LV_Delete()
@@ -720,8 +697,8 @@ DrawListView(windows, iconArray) {
       row_num++
     }
   }
-  ListLines, Off
   LV_Modify(1, "Select")
+  ListLines, Off
   loop % LV_GetCount() {
     LV_GetText(r,A_Index,3)
     if (r = selectedRow) {
@@ -730,13 +707,28 @@ DrawListView(windows, iconArray) {
     }
   }
   ListLines, On
-  LV_ModifyCol(1,compact ? 50 : 70)
+  LV_ModifyCol(1, "Auto")
+  ; keep the icon/number column width the same as it was at 
+  ; the start of a search, while allowing it to grow if needed
+  SendMessage, LVM_GETCOLUMNWIDTH, 0, 0, SysListView321, ahk_id %switcher_id%
+  col_width := ErrorLevel
+  OutputDebug, % col_width "`n"
+  if (col_width != "FAIL") {
+    if (col_width > max_width) {
+      max_width := col_width
+    }
+    if (col_width < max_width) {
+      LV_ModifyCol(1, max_width)
+    }
+  }
+
   LV_ModifyCol(2,110)
   GuiControl, +Redraw, list
   LV_Modify(1, "Select Vis")
-  initialLoadComplete := true
+  initialLoadComplete := true ; set flag to enable ShowSwitcher hotkey
 }
 
+; Portions of this from the example in the AutoHotkey help-file
 generateIconList(windows) {
   global compact, fileList
   static IconArray := Object(), IconHandles := Object()
@@ -777,12 +769,9 @@ generateIconList(windows) {
             }  ; 0x101 is SHGFI_ICON+SHGFI_SMALLICON
             if !found {
               IconHandles[iconId] := 0
-              ; IconNumber := 9999999 ; Set it out of bounds to display a blank icon.
             } else {
               IconHandles[iconId] := NumGet(sfi, 0)
             }
-            ; if (iconHandle != 0)
-              ; iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, iconHandle) + 1
           } else if (procName ~= "(Chrome|Firefox|Vivaldi) tab" || isAppWindow || ( !ownerHwnd and !isToolWindow )) {
               if (procName = "Chrome tab") ; Apply the Chrome icon to found Chrome tabs
                 wid := WinExist("ahk_exe chrome.exe")
@@ -823,7 +812,6 @@ generateIconList(windows) {
       iconHandle := IconHandles[iconId] || 9999999
       iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, IconHandles[iconId]) + 1
       window.icon := iconHandle
-      ; }
       if (removed || iconNumber < 1) {
         removedRows.Push(wid)
       } else {
@@ -881,15 +869,37 @@ TCMatch(aHaystack, aNeedle) {
 return DllCall(tcMatch, "WStr", aNeedle, "WStr", aHaystack)
 }
 
-FadeShow() {
-  DllCall("AnimateWindow",UInt,switcher_id,UInt,75,UInt,0xa0000)
-}
-
 FadeHide() {
-  global
-  DllCall("AnimateWindow",UInt,switcher_id,UInt,75,UInt,0x90000)
+  static func := Func("FadeGui").Bind("out")
+  WinSet, AlwaysOnTop, Off, ahk_id %switcher_id%
+  SetTimer, % func, -1
 }
 
+FadeGui(in_or_out := "in") {
+  static max_opacity := 225, step := 25, delay := 1
+  if (in_or_out = "out") {
+    opacity := max_opacity
+    WinSet, Transparent, % max_opacity, ahk_id %switcher_id%
+    while (opacity > 0) {
+      opacity -= step
+      WinSet, Transparent, % opacity, ahk_id %switcher_id%
+      Sleep delay
+    }
+    Gui, Hide
+  } else {
+    opacity := 0
+    Gui, Show, NoActivate, Window Switcher
+    WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
+    WinSet, Transparent, 0, ahk_id %switcher_id%
+    while (opacity < max_opacity) {
+      opacity += step
+      WinSet, Transparent, % opacity, ahk_id %switcher_id%
+      Sleep delay
+    }
+    WinGetPos, , , w, h, ahk_id %switcher_id%
+    WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %switcher_id% ; rounded corners
+  }
+}
 
 WM_LBUTTONDOWN() {
 
@@ -1027,10 +1037,6 @@ WM_MOUSEMOVE() {
 }
 
 Resize(width := "", height := "") {
-  ; global hLV
-  ; if (LV_VisibleRows().2 = LV_GetCount())
-  ;   LV_ScrollDown()
-    ; sendmessage, 0x115, 0, 0,, ahk_id %hlv%  
   if (!width || !height)
     WinGetPos,,, width, height, % "ahk_id" switcher_id
   WinSet, Region , 0-0 w%width% h%height% R15-15, ahk_id %switcher_id%
