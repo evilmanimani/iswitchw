@@ -33,7 +33,7 @@ Global compact := true
 ; sized out of bounds, you'll still be able to use the scroll wheel or arrows
 ; but when resizing the window you can't use the left edge of the window, just
 ; the top and bottom right.
-Global hideScrollBars := false
+Global hideScrollBars := true
 
 ; Uses tcmatch.dll included with QuickSearch eXtended by Samuel Plentz
 ; https://www.ghisler.ch/board/viewtopic.php?t=22592
@@ -51,7 +51,7 @@ DefaultTCSearch := "*"
 activateOnlyMatch := false
 
 ; Hides the UI when focus is lost!
-hideWhenFocusLost := false
+hideWhenFocusLost := true
 
 ; Window titles containing any of the listed substrings are filtered out from results
 ; useful for things like  hiding improperly configured tool windows or screen
@@ -62,7 +62,8 @@ filters := []
 ; Add folders containing files or shortcuts you'd like to show in the list.
 ; Enter new paths as an array
 ; todo: show file extensions/path in the list, etc.
-shortcutFolders := [] ;["C:\Users\mcleo\AppData\Roaming\Microsoft\Windows\Start Menu\Programs"]
+; shortCutFolders := []
+shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon]
 ; Set this to true to update the list of windows every time the search is
 ; updated. This is usually not necessary and creates additional overhead, so
 ; it is disabled by default. 
@@ -92,7 +93,7 @@ vivaldiDebugPort := 5000
 ;
 ;----------------------------------------------------------------------
 
-global browserTabObj, switcher_id, hlv
+global initialLoadComplete := false, browserTabObj, switcher_id, debounced := false, debounce_interval := 100 ;, hlv
 
 #SingleInstance force
 #WinActivateForce
@@ -117,6 +118,8 @@ if IsObject(shortcutFolders) {
     Loop, Files, % e "\*", R	
     fileList.Push({"fileName":RegExReplace(A_LoopFileName,"\.\w{3}$"),"path":A_LoopFileFullPath})
 }
+
+
 ; -- still working on options
 ; Menu, Context, Add, Options, MenuHandler
 Menu, Context, Add, Exit, MenuHandler
@@ -147,10 +150,14 @@ Gui, +LastFound +AlwaysOnTop +ToolWindow -Caption -Resize -DPIScale +Hwndswitche
 Gui, Color, black, 191919
 Gui, Margin, 8, 10
 Gui, Font, s14 cEEE8D5, Segoe MDL2 Assets
-Gui, Add, Text, xm+5 ym+3, % Chr(0xE721)
+Gui, Add, Text, ym, % Chr(0xE721)
+Gui, Font, s12 cEEE8D5, Segoe UI
+Gui, Add, Text, w420 R1 x+10 vEdit1 ym-2 ;-E0x200,
+Gui, Font, s10 cEEE8D5, Lucida Sans Typewriter
+Gui, Add, Text, w80 x+5 vCurrentRow ym -E0x200,
+; Gui, Add, ListView,  x9 y+8 w490 h500 -Hdr -Multi Count10 vlist gListViewFunc, index|title|proc|tab
 Gui, Font, s10 cEEE8D5, Segoe UI
-Gui, Add, Text, w420 h25 x+10 vEdit1 ym -E0x200,
-Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+8 w490 h500 -Hdr -Multi Count10 vlist gListViewFunc hwndhLV 0x2000 +LV0x100 +LV0x10000 -E0x200", index|title|proc|tab
+Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+12 w490 h500 -Hdr -Multi Count10 vlist hwndHLV gListViewFunc AltSubmit +LV0x100 +LV0x10000 -E0x200", index|title|proc|tab
 Gui, Show, , Window Switcher
 WinWaitActive, ahk_id %switcher_id%, , 1
 ; if gui_pos
@@ -158,7 +165,9 @@ WinWaitActive, ahk_id %switcher_id%, , 1
 LV_ModifyCol(4,0)
 Resize()
 WinHide, ahk_id %switcher_id%
-
+LVColor := new LV_Colors(HLV)
+LVColor.Critical := 100
+LVColor.SelectionColors(0x3c3c3c)
 ; Add hotkeys for number row and pad, to focus corresponding item number in the list 
 numkey := [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, "Numpad1", "Numpad2", "Numpad3", "Numpad4", "Numpad5", "Numpad6", "Numpad7", "Numpad8", "Numpad9", "Numpad0"]
 for i, e in numkey {
@@ -187,6 +196,7 @@ Return
 #Include lib\Accv2.ahk
 #Include lib\cJson.ahk
 #Include lib\JEE_AccHelperFuncs.ahk
+#Include lib\Class_LV_Colors.ahk
 
 GuiContextMenu() {
   global
@@ -240,9 +250,19 @@ onChar(ihook, char) {
   }
 }
 
+debounce() {
+  debounced := false
+}
+
 callRefresh(search := "") {
+  Gui, Font, s12 cEEE8D5, Segoe UI
   GuiControl, , Edit1, % search
-  ; RefreshWindowList(search)
+  if !search
+    debounce_interval := 100
+  if debounced && search
+    return
+  debounced := true
+  SetTimer, debounce, % -debounce_interval
   func := Func("RefreshWindowList").bind(search)
   SetTimer, % func, -1
 }
@@ -265,18 +285,20 @@ onEnd(ihook) {
 $CapsLock:: 
 ShowSwitcher() {
   global
+  if !initialLoadComplete
+    return
   Thread, NoTimers
   if !WinActive("ahk_id" switcher_id) {
     Thread, NoTimers
-    ihook.Start()
-    FadeShow()
     browserTabObj := ParseBrowserWindows()
     RefreshWindowList()
+    FadeShow()
     WinSet, Transparent, 225, ahk_id %switcher_id%
     WinActivate, ahk_id %switcher_id%
     WinGetPos, , , w, h, ahk_id %switcher_id%
     WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %switcher_id%
     WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
+    ihook.Start()
     If hideWhenFocusLost
       SetTimer, HideTimer, 10
   } else {
@@ -289,14 +311,13 @@ clearInput() {
   ihook.Stop()
   callRefresh()
   Sleep 50
-  LV_Modify(1, "Select Focus Vis")
+  LV_Modify(1, "Select Vis")
   ihook.Start()
 }
 
 tooltipOff() {
   ToolTip
 }
-
 #If WinExist("ahk_id" switcher_id)
 ; Enter::       ; Activate window
 ; Escape::      ; Close window
@@ -321,54 +342,52 @@ Tab::         ; ''
 KeyHandler() {
 ; ~Delete::
 ; ~Backspace::
+  row_count := LV_GetCount()
   SetKeyDelay, -1
   Switch A_ThisHotkey {
-    ; Case "Enter": ActivateWindow()
-    ; Case "Escape", "^[", "^q": FadeHide() ;WinHide, ahk_id %switcher_id%
-    Case "*Home": LV_ScrollTop()
-    Case "*End": LV_ScrollBottom()
+    ; Case "Enter": ActivateWindow() ; Case "Escape", "^[", "^q": FadeHide() ;WinHide, ahk_id %switcher_id%
+    Case "*Home": 
+      LV_Modify(1, "Select Vis")
+    Case "*End":
+      LV_Modify(row_count, "Select Vis")
     Case "!F4": ExitApp 
-    ; Case "^h": ControlSend, Edit1, {Backspace}, ahk_id %switcher_id%
-  ; Case "~Delete", "~Backspace", "^Backspace", "^w":
-  ;   If (SubStr(search, 1, 1) != "?"
-  ;       && DefaultTCSearch != "?"
-  ;   && ((windows.MaxIndex() < 1 && LV_GetCount() > 1) || LV_GetCount() = 1))
-    ; GuiControl, , Edit1,
-    ; Else If (A_ThisHotkey = "^Backspace" || A_ThisHotkey = "^w")
-    ;   ControlSend, Edit1, ^+{left}{Backspace}, ahk_id %switcher_id%
-  Case "Tab", "+Tab", "*Up", "*Down", "*PgUp", "*PgDn", "^k", "^j", "^u", "^d":
-    page := A_ThisHotkey ~= "^(\*Pg|\^[ud])"
-    row := LV_GetNext()
-    jump := page ? 4 : 1
-    If (row = 0)
-      row := 1
-    row := GetKeyState("Shift") || A_ThisHotkey ~= "Up|\^[ku]" 
-      ? row - jump 
-      : row + jump 
-    If (row > LV_GetCount()) 
-      row := page ? LV_GetCount() : 1 
-    Else If (row < 1)
-      row := page ? 1 : LV_GetCount()
-    LV_Modify(row, "Select Focus Vis")
-    if (row > LV_VisibleRows().2) {
-      LV_ScrollBottom(row)
-    } else if (row <= LV_VisibleRows().1) {
-      LV_ScrollTop(row)
-    }
+    Case "Tab", "+Tab", "*Up", "*Down", "*PgUp", "*PgDn", "^k", "^j", "^u", "^d":
+      page := A_ThisHotkey ~= "^(\*Pg|\^[ud])"
+      row := LV_GetNext()
+      jump := page ? 4 : 1
+      If (row = 0)
+        row := 1
+      row := GetKeyState("Shift") || A_ThisHotkey ~= "Up|\^[ku]" 
+        ? row - jump 
+        : row + jump 
+      If (row > LV_GetCount()) 
+        row := page ? LV_GetCount() : 1 
+      Else If (row < 1)
+        row := page ? 1 : LV_GetCount()
+      LV_Modify(row, "Select Vis")
   }
 }
 
-WheelDown::
-LV_ScrollDown() {
-  if (LV_VisibleRows().2 < LV_GetCount())
-    sendmessage, 0x115, 1, 0,, ahk_id %hlv%
-}
+; WheelDown::
+; LV_ScrollDown() {
+;   static EM_LINESCROLL := 0xB6
+;   lr := LV_VisibleRows().2
+;   rc := LV_GetCount()
+;   if (lr < rc) 
+;     PostMessage, EM_LINESCROLL, 0, 1, , ahk_id %hlv%
+;     ; postmessage, 0x115, 1, 0,, ahk_id %hlv%
+;   OutputDebug, % Format("Last visible row:{}, Row count:{}`n", lr, rc)
+; }
 
-WheelUp::
-LV_ScrollUp() {
-  if (LV_VisibleRows().1 > 0)
-    sendmessage, 0x115, 0, 0,, ahk_id %hlv%
-}
+; WheelUp::
+; LV_ScrollUp() {
+;   static EM_LINESCROLL := 0xB6
+;   fr := LV_VisibleRows().1
+;   if (fr > 0)
+;     PostMessage, EM_LINESCROLL, 0, -1, , ahk_id %hlv%
+;     ; postmessage, 0x115, 0, 0,, ahk_id %hlv%
+;   OutputDebug, % Format("First visible row:{}`n", fr)
+; }
 
 ~LButton Up::
 LButtonUp() {
@@ -411,8 +430,26 @@ Quit() {
 ; Handle mouse click events on the listview
 ;
 ListViewFunc() {
-  if (A_GuiControlEvent = "DoubleClick") {
+  global CurrentRow, allwindows, allRowCount
+  Critical
+  if (A_GuiEvent = "A") {
    ActivateWindow()
+  }
+  if (A_GuiEvent = "Normal") {
+    LV_Modify(cr, "-Focus")
+  } else if (A_GuiEvent = "I") {
+    change_type := Errorlevel
+    ; OutputDebug, % change_type
+    wc := allRowCount
+    rc := LV_GetCount()
+    cr := A_Eventinfo
+    if (InStr(change_type, "S", true)) {
+      format_str := Format("[{{}: {1}{}}/{{}: {1}{}}]", StrLen(wc))
+      GuiControl, , CurrentRow, % Format(format_str, cr, rc)
+      ; OutputDebug, % A_Eventinfo "`n"
+    }
+    ; if (InStr(change_type, "F", true)) {
+    ; }
   }
 } 
 
@@ -474,7 +511,7 @@ ParseAllWindows() {
   }
   return windows
 }
-
+/* 
 getVSCodeTabs(hwnd, mode := "set", setObj := 0) {
   static vsCodeWindows := Object()
   var := "v" hwnd
@@ -503,7 +540,7 @@ findVSCodeTabs(hwnd) {
   }
   getVSCodeTabs(hwnd, "set", result)
 }
-
+*/
 ParseBrowserWindows() {
   global chromeDebugPort, vivaldiDebugPort
   obj := Object()
@@ -527,8 +564,9 @@ ParseBrowserWindows() {
 }
 
 filterWindows(allwindows, search) {
-  global fileList, DefaultTCSearch
+  global fileList, DefaultTCSearch, debounce_interval
   static lastResultLen := 0, lastSearch := "", last_windows := []
+  start := A_TickCount
   found := InStr(search, lastSearch)
   newSearch := ( !found 
     || !search 
@@ -541,14 +579,21 @@ filterWindows(allwindows, search) {
     lastResultLen = 0
   lastSearch := search
   result := []
+  filterCount := toFilter.Count()
   for i, e in toFilter {
     str := Trim(e.url " " e.title " " e.procName)
     match := TCMatch(str,search) 
     if !search || (match && e.HasKey("icon")) {
+      if (search && filterCount <= 100) { ; only score/sort if there's less than 100 items
+        score := stringsimilarity.compareTwoStrings(str, search)
+        e.score := score
+      }
       result.Push(e)
     }
   }
   resultLen := result.Count()
+  if search && resultLen <= 100
+    result := ObjectSort(result, "score",,true)
   updateSearchStringColour(resultLen, lastResultLen)
   if (resultLen == 0) {
     result := last_windows
@@ -556,6 +601,9 @@ filterWindows(allwindows, search) {
   }
   lastResultLen := resultLen > 0 ? resultLen : lastResultLen
   last_windows := result
+  elapsed := A_TickCount - start
+  debounce_interval := elapsed + 25
+  OutputDebug, % "Filtering took " elapsed "ms`n"
   return [newSearch, result]
 }
 
@@ -573,10 +621,11 @@ updateSearchStringColour(len, last_len) {
 }
 
 RefreshWindowList(search := "") {
-  global fileList, refreshEveryKeystroke, activateOnlyMatch
-  static allwindows := ParseAllWindows(), iconArray := Object()
+  global fileList, refreshEveryKeystroke, activateOnlyMatch, allwindows, allRowCount
+  static iconArray := Object()
   if !search {
     allwindows := ParseAllWindows()
+    allRowCount := allwindows.Count() + fileList.Count()
   }
   for _, e in fileList {
     path := e.path 
@@ -598,7 +647,7 @@ RefreshWindowList(search := "") {
   windowLen := windows.Count()
   if (newSearch || iconArray.Count() == 0)
     iconArray := generateIconList(windows)
-  If (windowLen = 1 && activateOnlyMatch) {
+  if (windowLen = 1 && activateOnlyMatch) {
     ActivateWindow(1, windows_dict)
   } else if (windowLen > 0) {
     ActivateWindow("", windows_dict) ; update function with current windows list
@@ -622,7 +671,7 @@ ActivateWindow(rowNum := "", updateWindows := false) {
     return
   updateSearchStringColour(0,0)
   LV_GetText(wid, rowNum, 4)
-  FadeHide()
+  WinHide, ahk_id %switcher_id%
   window := windows[wid]
   procName := window.procName
   title := window.title
@@ -651,9 +700,6 @@ ActivateWindow(rowNum := "", updateWindows := false) {
   }
 }
 
-VSCodeFocusTab(id, accPath) {
-
-}
 ;------------------------------------------------------------5----------
 ;
 ; Add window list to listview
@@ -675,11 +721,11 @@ DrawListView(windows, iconArray) {
     }
   }
   ListLines, Off
-  LV_Modify(1, "Select Focus")
+  LV_Modify(1, "Select")
   loop % LV_GetCount() {
     LV_GetText(r,A_Index,3)
     if (r = selectedRow) {
-      LV_Modify(A_Index,"Select Focus Vis")
+      LV_Modify(A_Index,"Select Vis")
       break
     }
   }
@@ -687,11 +733,13 @@ DrawListView(windows, iconArray) {
   LV_ModifyCol(1,compact ? 50 : 70)
   LV_ModifyCol(2,110)
   GuiControl, +Redraw, list
+  LV_Modify(1, "Select Vis")
+  initialLoadComplete := true
 }
 
 generateIconList(windows) {
   global compact, fileList
-  static IconArray := Object()
+  static IconArray := Object(), IconHandles := Object()
   , WS_EX_TOOLWINDOW = 0x80
   , WS_EX_APPWINDOW = 0x40000
   , GW_OWNER = 4
@@ -711,78 +759,76 @@ generateIconList(windows) {
       WinGet, style, ExStyle, ahk_id %wid%
       isAppWindow := (style & WS_EX_APPWINDOW)
       isToolWindow := (style & WS_EX_TOOLWINDOW)
-
+      iconId := Format("{:s}", window.id)
       ownerHwnd := DllCall("GetWindow", "uint", wid, "uint", GW_OWNER)
       iconNumber := ""
-      if window.HasKey("path") {
-        FileName := window.path
-        ; Calculate buffer size required for SHFILEINFO structure.
-        sfi_size := A_PtrSize + 8 + (A_IsUnicode ? 680 : 340)
-        VarSetCapacity(sfi, sfi_size)
-        SplitPath, FileName,,, FileExt ; Get the file's extension.
-        for _, hex in [0x100, 0x101] {
-          found := DllCall("Shell32\SHGetFileInfo" . (A_IsUnicode ? "W":"A"), "Str", FileName
-          , "UInt", 0, "Ptr", &sfi, "UInt", sfi_size, "UInt", hex)
-          if found
-            Break
-        }  ; 0x101 is SHGFI_ICON+SHGFI_SMALLICON
-        if !found {
-          IconNumber := 9999999 ; Set it out of bounds to display a blank icon.
-        } else {
-          iconHandle := NumGet(sfi, 0)
-        }
-        if (iconHandle != 0)
-          iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, iconHandle) + 1
-      } else if (procName ~= "(Chrome|Firefox|Vivaldi) tab" || isAppWindow || ( !ownerHwnd and !isToolWindow )) {
-        if !(iconHandle := window.icon) {
-          if (procName = "Chrome tab") ; Apply the Chrome icon to found Chrome tabs
-            wid := WinExist("ahk_exe chrome.exe")
-          else if (procName = "Firefox tab")
-            wid := WinExist("ahk_exe firefox.exe")
-          else if (procName = "Vivaldi tab")
-            wid := WinExist("ahk_exe vivaldi.exe")
-          ; http://www.autohotkey.com/docs/misc/SendMessageList.htm
+      if (!IconHandles.HasKey(iconId)) {
+          if window.HasKey("path") {
+            FileName := window.path
+            ; Calculate buffer size required for SHFILEINFO structure.
+            sfi_size := A_PtrSize + 8 + (A_IsUnicode ? 680 : 340)
+            VarSetCapacity(sfi, sfi_size)
+            SplitPath, FileName,,, FileExt ; Get the file's extension.
+            for _, hex in [0x100, 0x101] {
+              found := DllCall("Shell32\SHGetFileInfo" . (A_IsUnicode ? "W":"A"), "Str", FileName
+              , "UInt", 0, "Ptr", &sfi, "UInt", sfi_size, "UInt", hex)
+              if found
+                Break
+            }  ; 0x101 is SHGFI_ICON+SHGFI_SMALLICON
+            if !found {
+              IconHandles[iconId] := 0
+              ; IconNumber := 9999999 ; Set it out of bounds to display a blank icon.
+            } else {
+              IconHandles[iconId] := NumGet(sfi, 0)
+            }
+            ; if (iconHandle != 0)
+              ; iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, iconHandle) + 1
+          } else if (procName ~= "(Chrome|Firefox|Vivaldi) tab" || isAppWindow || ( !ownerHwnd and !isToolWindow )) {
+              if (procName = "Chrome tab") ; Apply the Chrome icon to found Chrome tabs
+                wid := WinExist("ahk_exe chrome.exe")
+              else if (procName = "Firefox tab")
+                wid := WinExist("ahk_exe firefox.exe")
+              else if (procName = "Vivaldi tab")
+                wid := WinExist("ahk_exe vivaldi.exe")
+              ; http://www.autohotkey.com/docs/misc/SendMessageList.htm
 
-          SendMessage, WM_GETICON, ICON_BIG, 0, , ahk_id %wid%
-          iconHandle := ErrorLevel
-          if (iconHandle = 0) {
-            SendMessage, WM_GETICON, ICON_SMALL2, 0, , ahk_id %wid%
-            iconHandle := ErrorLevel
-            if (iconHandle = 0) {
-              SendMessage, WM_GETICON, ICON_SMALL, 0, , ahk_id %wid%
+              SendMessage, WM_GETICON, ICON_BIG, 0, , ahk_id %wid%
               iconHandle := ErrorLevel
               if (iconHandle = 0) {
-                ; http://msdn.microsoft.com/en-us/library/windows/desktop/ms633581(v=vs.85).aspx
-                ; To write code that is compatible with both 32-bit and 64-bit
-                ; versions of Windows, use GetClassLongPtr. When compiling for 32-bit
-                ; Windows, GetClassLongPtr is defined as a call to the GetClassLong
-                ; function.
-                iconHandle := DllCall("GetClassLongPtr", "uint", wid, "int", -14) ; GCL_HICON is -14
-
+                SendMessage, WM_GETICON, ICON_SMALL2, 0, , ahk_id %wid%
+                iconHandle := ErrorLevel
                 if (iconHandle = 0) {
-                  iconHandle := DllCall("GetClassLongPtr", "uint", wid, "int", -34) ; GCL_HICONSM is -34
+                  SendMessage, WM_GETICON, ICON_SMALL, 0, , ahk_id %wid%
+                  iconHandle := ErrorLevel
                   if (iconHandle = 0) {
-                    iconHandle := DllCall("LoadIcon", "uint", 0, "uint", 32512) ; IDI_APPLICATION is 32512
+                    ; http://msdn.microsoft.com/en-us/library/windows/desktop/ms633581(v=vs.85).aspx
+                    ; To write code that is compatible with both 32-bit and 64-bit
+                    ; versions of Windows, use GetClassLongPtr. When compiling for 32-bit
+                    ; Windows, GetClassLongPtr is defined as a call to the GetClassLong
+                    ; function.
+                    iconHandle := DllCall("GetClassLongPtr", "uint", wid, "int", -14) ; GCL_HICON is -14
+
+                    if (iconHandle = 0) {
+                      iconHandle := DllCall("GetClassLongPtr", "uint", wid, "int", -34) ; GCL_HICONSM is -34
+                      if (iconHandle = 0) {
+                        iconHandle := DllCall("LoadIcon", "uint", 0, "uint", 32512) ; IDI_APPLICATION is 32512
+                      }
+                    }
                   }
                 }
               }
-            }
+              IconHandles[iconId] := iconHandle
           }
-        }
-        if (iconHandle != 0) {
-          iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, iconHandle) + 1
-          window.icon := iconHandle
-        }
-      } else {
-        WinGetClass, Win_Class, ahk_id %wid%
-        if Win_Class = #32770 ; fix for displaying control panel related windows (dialog class) that aren't on taskbar
-          iconNumber := IL_Add(imageListID, "C:\WINDOWS\system32\shell32.dll", 217) ; generic control panel icon
       }
+      iconHandle := IconHandles[iconId] || 9999999
+      iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, IconHandles[iconId]) + 1
+      window.icon := iconHandle
+      ; }
       if (removed || iconNumber < 1) {
         removedRows.Push(wid)
       } else {
         iconCount+=1
-        IconArray[Format("{:s}", window.id)] := {"icon":"Icon" . iconNumber, "num": iconNumber} 
+        IconArray[iconId] := {"icon":"Icon" . iconNumber, "num": iconNumber} 
       }
     }
     LV_SetImageList(imageListID, 1)
@@ -981,78 +1027,189 @@ WM_MOUSEMOVE() {
 }
 
 Resize(width := "", height := "") {
-  global hLV
-  if (LV_VisibleRows().2 = LV_GetCount())
-    LV_ScrollDown()
+  ; global hLV
+  ; if (LV_VisibleRows().2 = LV_GetCount())
+  ;   LV_ScrollDown()
     ; sendmessage, 0x115, 0, 0,, ahk_id %hlv%  
   if (!width || !height)
     WinGetPos,,, width, height, % "ahk_id" switcher_id
   WinSet, Region , 0-0 w%width% h%height% R15-15, ahk_id %switcher_id%
   GuiControl, Move, list, % "w" (hideScrollBars ? width + 20 : width - 20) " h" height - 50
-  GuiControl, Move, search, % "w" width - 52
+  GuiControl, Move, Edit1, % "w" width - 160 
+  GuiControl, Move, CurrentRow, % "x" width - 85
   LV_ModifyCol(3
     , width - ( hideScrollBars
       ? (compact ? 170 : 190) ; Resizes column 3 to match gui width
     : (compact ? 200 : 220)))
-  }
+}
 
-  SetWindowPosition(hwnd, x := "", y := "", w := "", h := "") {
-    global hLV
-    DllCall("SetWindowPos","uint",hwnd,"uint",0
-      ,"int",x,"int",y,"int",w,"int",h
-    ,"uint",0x40)
-  }
+SetWindowPosition(hwnd, x := "", y := "", w := "", h := "") {
+  ; global hLV
+  DllCall("SetWindowPos","uint",hwnd,"uint",0
+    ,"int",x,"int",y,"int",w,"int",h
+  ,"uint",0x40)
+}
+
 
 GetProcessName(wid) {
   WinGet, name, ProcessName, ahk_id %wid%
   return StrSplit(name, ".").1
 }
 
-LV_ScrollBottom(row := "") {
-  try {
-    totalRows := LV_GetCount()
-    if !row
-      row := totalRows
-    loop {
-      lastVisibleRow := LV_VisibleRows().2
-      if (lastVisibleRow >= row || A_Index > totalRows)
-        break
-      sendmessage, 0x115, 1, 0,, ahk_id %hlv%
-    } 
-    LV_Modify(row, "Select Focus")
-  } catch e {
-    OutputDebug, % e
-  }
+; from https://github.com/Chunjee/string-similarity.ahk/
+
+class stringsimilarity {
+
+	; --- Static Methods ---
+
+	compareTwoStrings(param_string1, param_string2) {
+		;Sørensen-Dice coefficient
+		savedBatchLines := A_BatchLines
+		setBatchLines, -1
+
+		vCount := 0
+		;make default key value 0 instead of a blank string
+		l_arr := {base:{__Get:func("abs").bind(0)}}
+		loop, % vCount1 := strLen(param_string1) - 1 {
+			l_arr["z" subStr(param_string1, A_Index, 2)]++
+		}
+		loop, % vCount2 := strLen(param_string2) - 1 {
+			if (l_arr["z" subStr(param_string2, A_Index, 2)] > 0) {
+				l_arr["z" subStr(param_string2, A_Index, 2)]--
+				vCount++
+			}
+		}
+		vSDC := round((2 * vCount) / (vCount1 + vCount2), 2)
+		;round to 0 if less than 0.005
+		if (!vSDC || vSDC < 0.005) {
+			return 0
+		}
+		; return 1 if rounded to 1.00
+		if (vSDC = 1) {
+			return 1
+		}
+		setBatchLines, % savedBatchLines
+		return vSDC
+	}
+
+
+	findBestMatch(param_string, param_array, param_key) {
+		savedBatchLines := A_BatchLines
+		setBatchLines, -1
+		if (!isObject(param_array)) {
+			setBatchLines, % savedBatchLines
+			return false
+		}
+
+		l_arr := []
+
+		; Score each option and save into a new array
+		for key, value in param_array {
+      if (param_key)
+        value := value[param_key]
+			l_arr[A_Index, "rating"] := this.compareTwoStrings(param_string, value)
+			l_arr[A_Index, "target"] := value
+		}
+
+		;sort the rated array
+		l_sortedArray := this._internal_Sort2DArrayFast(l_arr, "rating")
+		; create the besMatch property and final object
+		l_object := {bestMatch: l_sortedArray[1].clone(), ratings: l_sortedArray}
+		setBatchLines, % savedBatchLines
+		return l_object
+	}
+
+
+	simpleBestMatch(param_string, param_array) {
+		if (!IsObject(param_array)) {
+			return false
+		}
+		l_highestRating := 0
+
+		for key, value in param_array {
+			l_rating := this.compareTwoStrings(param_string, value)
+			if (l_highestRating < l_rating) {
+				l_highestRating := l_rating
+				l_bestMatchValue := value
+			}
+		}
+		return l_bestMatchValue
+	}
+
+
+
+	_internal_Sort2DArrayFast(param_arr, param_key)
+	{
+		for index, obj in param_arr {
+			out .= obj[param_key] "+" index "|"
+			; "+" allows for sort to work with just the value
+			; out will look like:   value+index|value+index|
+		}
+
+		v := param_arr[param_arr.minIndex(), param_key]
+		if v is number
+			type := " N "
+		out := subStr(out, 1, strLen(out) -1) ; remove trailing |
+		sort, out, % "D| " type  " R"
+		l_arr := []
+		loop, parse, out, |
+			l_arr.push(param_arr[subStr(A_LoopField, inStr(A_LoopField, "+") + 1)])
+		return l_arr
+	}
 }
 
-LV_ScrollTop(row := "") {
-  try {
-    totalRows := LV_GetCount()
-    if !row
-      row := 1
-    loop {
-      firstVisibleRow := LV_VisibleRows().1
-      if (firstVisibleRow <= row - 1 || A_Index > totalRows)
-        break
-      sendmessage, 0x115, 0, 0,, ahk_id %hlv%
-    } 
-    LV_Modify(row, "Select Focus")
-  } catch e {
-    OutputDebug, % e
-  }
-}
-
-LV_VisibleRows() {
-  global hlv
-  static LVM_GETTOPINDEX = 4135		; gets the first visible row
-  , LVM_GETCOUNTPERPAGE = 4136	; gets number of visible rows
-  try {
-    SendMessage, LVM_GETCOUNTPERPAGE, 0, 0, , ahk_id %hLV%
-    LV_NumOfRows := ErrorLevel	; get number of visible rows
-    SendMessage, LVM_GETTOPINDEX, 0, 0, , ahk_id %hLV%
-    LV_topIndex := ErrorLevel	; get first visible row
-    return [LV_topIndex, LV_topIndex + LV_NumOfRows, LV_NumOfRows] ; [Top row, last row, total visible]
-  } catch e {
-    OutputDebug, % e
-  }
+/* ObjectSort() by bichlepa
+* 
+* Description:
+*    Reads content of an object and returns a sorted array
+* 
+* Parameters:
+*    obj:              Object which will be sorted
+*    keyName:          [optional] 
+*                      Omit it if you want to sort a array of strings, numbers etc.
+*                      If you have an array of objects, specify here the key by which contents the object will be sorted.
+*    callBackFunction: [optional] Use it if you want to have custom sort rules.
+*                      The function will be called once for each value. It must return a number or string.
+*    reverse:          [optional] Pass true if the result array should be reversed
+*/
+objectSort(obj, keyName="", callbackFunc="", reverse=false)
+{
+	temp := Object()
+	sorted := Object() ;Return value
+	
+	for oneKey, oneValue in obj
+	{
+		;Get the value by which it will be sorted
+		if keyname
+			value := oneValue[keyName]
+		else
+			value := oneValue
+		
+		;If there is a callback function, call it. The value is the key of the temporary list.
+		if (callbackFunc)
+			tempKey := %callbackFunc%(value)
+		else
+			tempKey := value
+		
+		;Insert the value in the temporary object.
+		;It may happen that some values are equal therefore we put the values in an array.
+		if not isObject(temp[tempKey])
+			temp[tempKey] := []
+		temp[tempKey].push(oneValue)
+	}
+	
+	;Now loop throuth the temporary list. AutoHotkey sorts them for us.
+	for oneTempKey, oneValueList in temp
+	{
+		for oneValueIndex, oneValue in oneValueList
+		{
+			;And add the values to the result list
+			if (reverse)
+				sorted.insertAt(1,oneValue)
+			else
+				sorted.push(oneValue)
+		}
+	}
+	
+	return sorted
 }
