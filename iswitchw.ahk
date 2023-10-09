@@ -64,7 +64,7 @@ filters := []
 ; todo: show file extensions/path in the list, etc.
 ; shortCutFolders := []
 ; shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon]
-shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, "C:\Users\mcleo\OneDrive\Documents", A_DesktopCommon]
+shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon]
 
 recurse_limit := 2
 
@@ -88,7 +88,6 @@ vivaldiDebugPort := 5000
 ;
 ; Global variables
 ;
-;     allwindows  - windows on desktop
 ;     windows     - windows in listbox
 ;     search      - the current search string
 ;     lastSearch  - previous search string
@@ -97,7 +96,7 @@ vivaldiDebugPort := 5000
 ;
 ;----------------------------------------------------------------------
 
-global initialLoadComplete := false, browserTabObj, switcher_id, debounced := false, refresh_queued := false, debounce_interval := 100 ;, hlv
+global initialLoadComplete := false, browserTabObj, switcher_id, debounced := false, refresh_queued := false, debounce_interval := 100
 
 #SingleInstance force
 #WinActivateForce
@@ -129,7 +128,6 @@ if IsObject(shortcutFolders) {
         || !(A_LoopFileName ~= "^.*\.(jpe?g|gif|png|docx?|xls|exe|txt|lnk)$"))
         continue
       fileList.Push({"fileName":A_LoopFileName,"path":A_LoopFileFullPath})
-      ; fileList.Push({"fileName":RegExReplace(A_LoopFileName,"\.\w{3}$"),"path":A_LoopFileFullPath})
     }
   }
 }
@@ -174,7 +172,7 @@ LV_ModifyCol(4,0)
 Resize()
 WinHide, ahk_id %switcher_id%
 LVColor := new LV_Colors(HLV)
-LVColor.Critical := 100
+LVColor.Critical := "On"
 LVColor.SelectionColors(0x3c3c3c)
 ; Add hotkeys for number row and pad, to focus corresponding item number in the list 
 numkey := [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, "Numpad1", "Numpad2", "Numpad3", "Numpad4", "Numpad5", "Numpad6", "Numpad7", "Numpad8", "Numpad9", "Numpad0"]
@@ -186,12 +184,12 @@ for i, e in numkey {
 }
 
 chromeTabObj := Object(), vivaldiTabObj := Object()
-; Progress, Param1 [, SubText, MainText, WinTitle, FontName]
 RefreshWindowList()
 global ihook
 ihook := InputHook("", "{Esc}{Enter}")
 ihook.OnChar := Func("onChar")
 ihook.onKeyDown := Func("onKeyDown")
+ihook.VisibleNonText := false
 ihook.NotifyNonText := true
 ihook.OnEnd := Func("onEnd")
 Return
@@ -288,7 +286,7 @@ onEnd(ihook) {
 }
 ;----------------------------------------------------------------------
 ;
-; Win+space to activate.
+; Capslock to activate (feel free to change if desired)
 ;
 ; #space::
 $CapsLock::
@@ -323,12 +321,7 @@ tooltipOff() {
   ToolTip
 }
 #If WinExist("ahk_id" switcher_id)
-; Enter::       ; Activate window
-; Escape::      ; Close window
-; ^[::          ; ''
-; ^q::          ; ''
-; ^Backspace::  ; Clear text
-; ^w::          ; ''
+^[::            ; Close window
 ; ^h::          ; Backspace
 *Down::        ; Next row
 Tab::         ; ''
@@ -347,11 +340,14 @@ KeyHandler() {
   row_count := LV_GetCount()
   SetKeyDelay, -1
   Switch A_ThisHotkey {
+    Case "^[": 
+      ihook.Stop()
+      FadeHide()
     Case "*Home": 
       LV_Modify(1, "Select Vis")
     Case "*End":
       LV_Modify(row_count, "Select Vis")
-    Case "!F4": ExitApp 
+    Case "!F4": ExitApp
     Case "Tab", "+Tab", "*Up", "*Down", "*PgUp", "*PgDn", "^k", "^j", "^u", "^d":
       page := A_ThisHotkey ~= "^(\*Pg|\^[ud])"
       row := LV_GetNext()
@@ -408,8 +404,8 @@ Quit() {
 ; Handle mouse click events on the listview
 ;
 ListViewFunc() {
-  global CurrentRow, allwindows, allRowCount
-  Critical
+  global CurrentRow, allRowCount
+  Critical, 50
   if (A_GuiEvent = "A") {
    ActivateWindow()
   }
@@ -422,12 +418,12 @@ ListViewFunc() {
     cr := A_Eventinfo
     if (InStr(change_type, "S", true)) {
       format_str := Format("{{}: {1}{}}/{{}: {1}{}}", StrLen(wc))
+      WinGetPos, , , gui_w, , ahk_id %switcher_id%
       GuiControl, , CurrentRow, % Format(format_str, cr, rc)
       ControlGetPos, x, , w, , Static3
       right_edge := x + w
-      if right_edge > A_GuiWidth - 10 
-        GuiControl, Move, CurrentRow, % A_GuiWidth - 10 - w
-      
+      if right_edge > (gui_w - 10)
+        GuiControl, Move, CurrentRow, % "x" gui_w - 10 - w
     }
   }
 } 
@@ -491,6 +487,7 @@ ParseAllWindows() {
   return windows
 }
 
+; WIP
 /* 
 getVSCodeTabs(hwnd, mode := "set", setObj := 0) {
   static vsCodeWindows := Object()
@@ -604,13 +601,11 @@ updateSearchStringColour(len, last_len) {
 }
 
 RefreshWindowList(search := "") {
-  global fileList, refreshEveryKeystroke, activateOnlyMatch, allwindows, allRowCount
-  static iconArray := Object()
-  if !search {
-    allwindows := ParseAllWindows()
-    allRowCount := allwindows.Count() + fileList.Count()
-  }
+  global fileList, refreshEveryKeystroke, activateOnlyMatch, allRowCount
+  static iconArray := Object(), allwindows
+  allwindows := ParseAllWindows()
   allwindows.Push(fileList*)
+  allRowCount := allwindows.Count()
   result := !!search ? filterWindows(allwindows, search) : [1, allwindows]
   newSearch := result.1
   windows := result.2
@@ -680,7 +675,7 @@ ActivateWindow(rowNum := "", updateWindows := false) {
 ; Add window list to listview
 ;
 DrawListView(windows, iconArray) {
-  Global switcher_id, fileList, hlv, compact
+  Global switcher_id, fileList, hlv, compact, allRowCount
   static max_width := 50 ; set max width for icon/number column, will adjust itself if needed
   , LVM_GETCOLUMNWIDTH := 0x101d
   LV_GetText(selectedRow, LV_GetNext(),3)
@@ -724,7 +719,9 @@ DrawListView(windows, iconArray) {
 
   LV_ModifyCol(2,110)
   GuiControl, +Redraw, list
+  totalRows := LV_GetCount()
   LV_Modify(1, "Select Vis")
+  Resize()
   initialLoadComplete := true ; set flag to enable ShowSwitcher hotkey
 }
 
@@ -877,6 +874,7 @@ FadeHide() {
 
 FadeGui(in_or_out := "in") {
   static max_opacity := 225, step := 25, delay := 1
+  ListLines, Off
   if (in_or_out = "out") {
     opacity := max_opacity
     WinSet, Transparent, % max_opacity, ahk_id %switcher_id%
@@ -1032,21 +1030,40 @@ WM_MOUSEMOVE() {
     if (newWidth <= 220 || newHeight <= 127)
       return  
     SetWindowPosition(switcher_id,winX,winY,newWidth,newHeight)
-    Resize(newWidth,newHeight)
+    Resize(newWidth,newHeight, winWidth)
   }
 }
 
-Resize(width := "", height := "") {
-  if (!width || !height)
+Resize(width := "", height := "", last_width := 0) {
+  if (!width || !height) {
     WinGetPos,,, width, height, % "ahk_id" switcher_id
+  }
+  if !last_width
+    last_width := width
+  w_diff := width - last_width
+  ControlGetPos, CurrentRow_x, , w, , Static3
   WinSet, Region , 0-0 w%width% h%height% R15-15, ahk_id %switcher_id%
   GuiControl, Move, list, % "w" (hideScrollBars ? width + 20 : width - 20) " h" height - 50
   GuiControl, Move, Edit1, % "w" width - 160 
-  GuiControl, Move, CurrentRow, % "x" width - 85
-  LV_ModifyCol(3
-    , width - ( hideScrollBars
-      ? (compact ? 170 : 190) ; Resizes column 3 to match gui width
-    : (compact ? 200 : 220)))
+  if w_diff
+    GuiControl, Move, CurrentRow, % "x" CurrentRow_x + w_diff
+  if (c := GetColumnWidths()) {
+    LV_ModifyCol(3, (width - (c.1 + c.2)) - (hideScrollBars ? 1 : 41))
+  }
+}
+
+GetColumnWidths(control := "") {
+  static LVM_GETCOLUMNWIDTH := 0x101D
+  if !control
+    control := "SysListView321"
+  result := []
+  loop % LV_GetCount("Column") {
+    SendMessage, LVM_GETCOLUMNWIDTH, A_Index - 1, 0, % control, ahk_id %switcher_id%
+    if ErrorLevel == "FAIL"
+      return 0
+    result.Push(ErrorLevel)
+  }
+  return result
 }
 
 SetWindowPosition(hwnd, x := "", y := "", w := "", h := "") {
@@ -1055,7 +1072,6 @@ SetWindowPosition(hwnd, x := "", y := "", w := "", h := "") {
     ,"int",x,"int",y,"int",w,"int",h
   ,"uint",0x40)
 }
-
 
 GetProcessName(wid) {
   WinGet, name, ProcessName, ahk_id %wid%
