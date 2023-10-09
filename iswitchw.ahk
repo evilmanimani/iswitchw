@@ -27,13 +27,13 @@
 ;
 
 ; Use small icons in the listview
-Global compact := true
+global compact := true
 
 ; A bit of a hack, but this 'hides' the scroll bars, rather the listview is    
 ; sized out of bounds, you'll still be able to use the scroll wheel or arrows
 ; but when resizing the window you can't use the left edge of the window, just
 ; the top and bottom right.
-Global hideScrollBars := true
+global hideScrollBars := true
 
 ; Uses tcmatch.dll included with QuickSearch eXtended by Samuel Plentz
 ; https://www.ghisler.ch/board/viewtopic.php?t=22592
@@ -561,11 +561,12 @@ filterWindows(allwindows, search) {
   for i, e in toFilter {
     str := Trim(e.procName " " e.title " " e.url)
     match := TCMatch(str,search) 
-    if !search || (match && e.HasKey("icon")) {
+    if (!search || match) {
+    ; if !search || (match && e.HasKey("icon")) {
       if (search && filterCount <= 100) { ; only score/sort if there's less than 100 items
         score := stringsimilarity.compareTwoStrings(str, search)
         if e.HasKey("path")
-         score -= 0.4, if (score < 0) score := 0 ; penalize files
+         score -= 0.3, if (score < 0) score := 0 ; penalize files
         e.score := score
       }
       result.Push(e)
@@ -675,7 +676,7 @@ ActivateWindow(rowNum := "", updateWindows := false) {
 ; Add window list to listview
 ;
 DrawListView(windows, iconArray) {
-  Global switcher_id, fileList, hlv, compact, allRowCount
+  Global switcher_id, hlv, compact, allRowCount
   static max_width := 50 ; set max width for icon/number column, will adjust itself if needed
   , LVM_GETCOLUMNWIDTH := 0x101d
   LV_GetText(selectedRow, LV_GetNext(),3)
@@ -727,7 +728,7 @@ DrawListView(windows, iconArray) {
 
 ; Portions of this from the example in the AutoHotkey help-file
 generateIconList(windows) {
-  global compact, fileList
+  global compact
   static IconArray := Object(), IconHandles := Object()
   , WS_EX_TOOLWINDOW = 0x80
   , WS_EX_APPWINDOW = 0x40000
