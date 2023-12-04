@@ -729,7 +729,8 @@ DrawListView(windows, iconArray) {
 ; Portions of this from the example in the AutoHotkey help-file
 generateIconList(windows) {
   global compact
-  static IconArray := Object(), IconHandles := Object()
+  static IconArray := Object()
+  , IconHandles := Object()
   , WS_EX_TOOLWINDOW = 0x80
   , WS_EX_APPWINDOW = 0x40000
   , GW_OWNER = 4
@@ -738,86 +739,82 @@ generateIconList(windows) {
   , ICON_BIG := 1
   , ICON_SMALL2 := 2
   , ICON_SMALL := 0
+
   iconCount = 0
   imageListID := IL_Create(windows.Count(), 1, compact ? 0 : 1)
-    For idx, window in windows {
-      wid := window.id
-      title := window.title
-      procName := window.procName
-      tab := window.num
-      removed := false
-      WinGet, style, ExStyle, ahk_id %wid%
-      isAppWindow := (style & WS_EX_APPWINDOW)
-      isToolWindow := (style & WS_EX_TOOLWINDOW)
-      iconId := Format("{:s}", window.id)
-      ownerHwnd := DllCall("GetWindow", "uint", wid, "uint", GW_OWNER)
-      iconNumber := ""
-      if (!IconHandles.HasKey(iconId)) {
-          if window.HasKey("path") {
-            FileName := window.path
-            ; Calculate buffer size required for SHFILEINFO structure.
-            sfi_size := A_PtrSize + 8 + (A_IsUnicode ? 680 : 340)
-            VarSetCapacity(sfi, sfi_size)
-            SplitPath, FileName,,, FileExt ; Get the file's extension.
-            for _, hex in [0x100, 0x101] {
-              found := DllCall("Shell32\SHGetFileInfo" . (A_IsUnicode ? "W":"A"), "Str", FileName
-              , "UInt", 0, "Ptr", &sfi, "UInt", sfi_size, "UInt", hex)
-              if found
-                Break
-            }  ; 0x101 is SHGFI_ICON+SHGFI_SMALLICON
-            if !found {
-              IconHandles[iconId] := 0
-            } else {
-              IconHandles[iconId] := NumGet(sfi, 0)
-            }
-          } else if (procName ~= "(Chrome|Firefox|Vivaldi) tab" || isAppWindow || ( !ownerHwnd and !isToolWindow )) {
-              if (procName = "Chrome tab") ; Apply the Chrome icon to found Chrome tabs
-                wid := WinExist("ahk_exe chrome.exe")
-              else if (procName = "Firefox tab")
-                wid := WinExist("ahk_exe firefox.exe")
-              else if (procName = "Vivaldi tab")
-                wid := WinExist("ahk_exe vivaldi.exe")
-              ; http://www.autohotkey.com/docs/misc/SendMessageList.htm
-
-              SendMessage, WM_GETICON, ICON_BIG, 0, , ahk_id %wid%
-              iconHandle := ErrorLevel
-              if (iconHandle = 0) {
-                SendMessage, WM_GETICON, ICON_SMALL2, 0, , ahk_id %wid%
-                iconHandle := ErrorLevel
-                if (iconHandle = 0) {
-                  SendMessage, WM_GETICON, ICON_SMALL, 0, , ahk_id %wid%
-                  iconHandle := ErrorLevel
-                  if (iconHandle = 0) {
-                    ; http://msdn.microsoft.com/en-us/library/windows/desktop/ms633581(v=vs.85).aspx
-                    ; To write code that is compatible with both 32-bit and 64-bit
-                    ; versions of Windows, use GetClassLongPtr. When compiling for 32-bit
-                    ; Windows, GetClassLongPtr is defined as a call to the GetClassLong
-                    ; function.
-                    iconHandle := DllCall("GetClassLongPtr", "uint", wid, "int", -14) ; GCL_HICON is -14
-
-                    if (iconHandle = 0) {
-                      iconHandle := DllCall("GetClassLongPtr", "uint", wid, "int", -34) ; GCL_HICONSM is -34
-                      if (iconHandle = 0) {
-                        iconHandle := DllCall("LoadIcon", "uint", 0, "uint", 32512) ; IDI_APPLICATION is 32512
-                      }
-                    }
-                  }
-                }
-              }
-              IconHandles[iconId] := iconHandle
+  For idx, window in windows {
+    wid := window.id
+    title := window.title
+    procName := window.procName
+    tab := window.num
+    removed := false
+    WinGet, style, ExStyle, ahk_id %wid%
+    isAppWindow := (style & WS_EX_APPWINDOW)
+    isToolWindow := (style & WS_EX_TOOLWINDOW)
+    iconId := Format("{:s}", window.id)
+    ownerHwnd := DllCall("GetWindow", "uint", wid, "uint", GW_OWNER)
+    iconNumber := ""
+    if (!IconHandles.HasKey(iconId)) {
+        if window.HasKey("path") {
+          FileName := window.path
+          ; Calculate buffer size required for SHFILEINFO structure.
+          sfi_size := A_PtrSize + 8 + (A_IsUnicode ? 680 : 340)
+          VarSetCapacity(sfi, sfi_size)
+          SplitPath, FileName,,, FileExt ; Get the file's extension.
+          for _, hex in [0x100, 0x101] {
+            found := DllCall("Shell32\SHGetFileInfo" . (A_IsUnicode ? "W":"A"), "Str", FileName
+            , "UInt", 0, "Ptr", &sfi, "UInt", sfi_size, "UInt", hex)
+            if found
+              Break
+          }  ; 0x101 is SHGFI_ICON+SHGFI_SMALLICON
+          if !found {
+            IconHandles[iconId] := 0
+          } else {
+            IconHandles[iconId] := NumGet(sfi, 0)
           }
-      }
-      iconHandle := IconHandles[iconId] || 9999999
-      iconNumber := DllCall("ImageList_ReplaceIcon", UInt, imageListID, Int, -1, UInt, IconHandles[iconId]) + 1
-      window.icon := iconHandle
-      if (removed || iconNumber < 1) {
-        removedRows.Push(wid)
-      } else {
-        iconCount+=1
-        IconArray[iconId] := {"icon":"Icon" . iconNumber, "num": iconNumber} 
-      }
+        } else if (procName ~= "(Chrome|Firefox|Vivaldi) tab" || isAppWindow || ( !ownerHwnd and !isToolWindow )) {
+            if (procName = "Chrome tab") ; Apply the Chrome icon to found Chrome tabs
+              wid := WinExist("ahk_exe chrome.exe")
+            else if (procName = "Firefox tab")
+              wid := WinExist("ahk_exe firefox.exe")
+            else if (procName = "Vivaldi tab")
+              wid := WinExist("ahk_exe vivaldi.exe")
+            else if (procName = "vivaldi")
+              Continue
+            ; http://www.autohotkey.com/docs/misc/SendMessageList.htm
+            iconHandle := 0
+            for i, v in [ICON_BIG, ICON_SMALL2, ICON_SMALL] {
+              SendMessage, WM_GETICON, % v, 0, , ahk_id %wid%
+              iconHandle := ErrorLevel
+              if (iconHandle)
+                Break
+            }
+            ; http://msdn.microsoft.com/en-us/library/windows/desktop/ms633581(v=vs.85).aspx
+            ; To write code that is compatible with both 32-bit and 64-bit
+            ; versions of Windows, use GetClassLongPtr. When compiling for 32-bit
+            ; Windows, GetClassLongPtr is defined as a call to the GetClassLong
+            ; function.
+            for i, v in [["GetClassLongPtr", wid, "int", -14]
+                        ,["GetClassLongPtr", wid, "int", -34]
+                        ,["LoadIcon", 0, "uint", 32512]] {
+              if (iconHandle)
+                Break
+              iconHandle := DllCall(v.1, "uint", v.2, v.3, v.4)
+            }
+            IconHandles[iconId] := iconHandle
+        }
     }
-    LV_SetImageList(imageListID, 1)
+    iconHandle := IconHandles[iconId] || 9999999
+    iconNumber := DllCall("ImageList_ReplaceIcon", "uint", imageListID, "int", -1, "uint", IconHandles[iconId]) + 1
+    window.icon := iconHandle
+    if (removed || iconNumber < 1) {
+      removedRows.Push(wid)
+    } else {
+      iconCount+=1
+      IconArray[iconId] := {"icon":"Icon" . iconNumber, "num": iconNumber} 
+    }
+  }
+  LV_SetImageList(imageListID, 1)
   return IconArray
 }
 
