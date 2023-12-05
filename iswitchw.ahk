@@ -66,6 +66,9 @@ filters := []
 ; shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon]
 shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon]
 
+; how far to search into sub-folders for the above shortcut folders
+; depending on the shortcut folder, setting this too high will probably increase
+; startup-time exponentially, if it doesn't lock up first that is
 recurse_limit := 2
 
 ; Set this to true to update the list of windows every time the search is
@@ -96,7 +99,12 @@ vivaldiDebugPort := 5000
 ;
 ;----------------------------------------------------------------------
 
-global initialLoadComplete := false, browserTabObj, switcher_id, debounced := false, refresh_queued := false, debounce_interval := 100
+global initialLoadComplete := false
+, browserTabObj
+, switcher_id
+, debounced := false
+, refresh_queued := false
+, debounce_interval := 100
 
 #SingleInstance force
 #WinActivateForce
@@ -179,7 +187,7 @@ numkey := [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, "Numpad1", "Numpad2", "Numpad3", "Numpa
 for i, e in numkey {
   num := StrReplace(e, "Numpad")
   KeyFunc := Func("ActivateWindow").Bind(num = 0 ? 10 : num)
-  Hotkey, IfWinActive, % "ahk_id" switcher_id
+  Hotkey, IfWinExist, % "ahk_id" switcher_id
     Hotkey, % "#" e, % KeyFunc
 }
 
@@ -213,26 +221,26 @@ MenuHandler() {
 
 onKeyDown(ihook, vk, sc) {
   static backspace := 8 
-  , ctrl_q := 81
-  , ctrl_w := 87
+  , ctrl_q := 81 ; 'q' key + modifier (any)
+  , ctrl_w := 87 ; 'w' key + modifer (any)
   , del := 46
-  , lctrl := 162
-  , rctrl := 163
   , last_key
   search := ihook.Input
-  clear := vk = backspace && (last_key = lctrl || last_key = rctrl)
+  ctrl_held :=  GetKeyState("Control")
+  alt_held := GetKeyState("Alt")
+  clear := vk = backspace && ctrl_held
     || vk = del
-    || vk = ctrl_w
+    || vk = ctrl_w && ctrl_held
   correct := vk = backspace 
   if (vk = ctrl_q) {
     ihook.Stop()
     FadeHide()
-  } 
+  }
   if (clear) {
     ihook.Stop()
     ihook.Start()
     search := ""
-  } 
+  }
   if (correct || clear) {
     callRefresh(search)
   }
@@ -462,14 +470,19 @@ ParseAllWindows() {
       continue
     if title {
         procName := GetProcessName(next)
-      if (procName = "vivaldi" && !vivaldi_pushed) {
-        vivaldi_pushed := true
-        windows.Push(browserTabObj.vivaldi*)
-      } else if (procName = "chrome" && !chrome_pushed) {
-        chrome_pushed := true
-        windows.Push(browserTabObj.chrome*)
+      if (procName = "vivaldi") { 
+        if (!vivaldi_pushed) {
+          vivaldi_pushed := true
+          windows.Push(browserTabObj.vivaldi*)
+        }
+      } else if (procName = "chrome") {
+        if (!chrome_pushed) {
+          chrome_pushed := true
+          windows.Push(browserTabObj.chrome*)
+        }
       } else if (procName = "firefox") {
         windows.Push(browserTabObj.firefox*)
+      ; vscode wip
       ; } else if (procName = "Code") {
       ;   if (obj := getVSCodeTabs(next, "get")) {
       ;     windows.Push(obj*)
@@ -562,7 +575,6 @@ filterWindows(allwindows, search) {
     str := Trim(e.procName " " e.title " " e.url)
     match := TCMatch(str,search) 
     if (!search || match) {
-    ; if !search || (match && e.HasKey("icon")) {
       if (search && filterCount <= 100) { ; only score/sort if there's less than 100 items
         score := stringsimilarity.compareTwoStrings(str, search)
         if e.HasKey("path")
@@ -589,13 +601,16 @@ filterWindows(allwindows, search) {
 }
 
 updateSearchStringColour(len, last_len) {
-  red := "cff2626"
-  green := "c90ee90fj"
-  color := "cEEE8D5" ; white
+  static red := "cff2626"
+  , green := "c90ee90fj"
+  , white := "cEEE8D5"
+
   if (len == 1 || len <= 1 && last_len = 1) { 
-    color := green 
+    color := green
   } else if (last_len > 1 && len == 0) { 
-    color := red 
+    color := red
+  } else {
+    color := white
   }
   Gui, Font, % color
   GuiControl, Font, Edit1
@@ -683,7 +698,7 @@ DrawListView(windows, iconArray) {
   GuiControl, -Redraw, list
   LV_Delete()
   row_num := 1
-  for i, e in windows { 
+  for i, e in windows {
     if (i < startFrom)
       continue
     if iconArray.HasKey(Format("{:s}",e.id)) {
@@ -708,7 +723,6 @@ DrawListView(windows, iconArray) {
   ; the start of a search, while allowing it to grow if needed
   SendMessage, LVM_GETCOLUMNWIDTH, 0, 0, SysListView321, ahk_id %switcher_id%
   col_width := ErrorLevel
-  OutputDebug, % col_width "`n"
   if (col_width != "FAIL") {
     if (col_width > max_width) {
       max_width := col_width
@@ -747,7 +761,6 @@ generateIconList(windows) {
     title := window.title
     procName := window.procName
     tab := window.num
-    removed := false
     WinGet, style, ExStyle, ahk_id %wid%
     isAppWindow := (style & WS_EX_APPWINDOW)
     isToolWindow := (style & WS_EX_TOOLWINDOW)
@@ -767,11 +780,7 @@ generateIconList(windows) {
             if found
               Break
           }  ; 0x101 is SHGFI_ICON+SHGFI_SMALLICON
-          if !found {
-            IconHandles[iconId] := 0
-          } else {
-            IconHandles[iconId] := NumGet(sfi, 0)
-          }
+          IconHandles[iconId] := !found ? 0 : NumGet(sfi, 0)
         } else if (procName ~= "(Chrome|Firefox|Vivaldi) tab" || isAppWindow || ( !ownerHwnd and !isToolWindow )) {
             if (procName = "Chrome tab") ; Apply the Chrome icon to found Chrome tabs
               wid := WinExist("ahk_exe chrome.exe")
@@ -779,8 +788,6 @@ generateIconList(windows) {
               wid := WinExist("ahk_exe firefox.exe")
             else if (procName = "Vivaldi tab")
               wid := WinExist("ahk_exe vivaldi.exe")
-            else if (procName = "vivaldi")
-              Continue
             ; http://www.autohotkey.com/docs/misc/SendMessageList.htm
             iconHandle := 0
             for i, v in [ICON_BIG, ICON_SMALL2, ICON_SMALL] {
@@ -807,9 +814,7 @@ generateIconList(windows) {
     iconHandle := IconHandles[iconId] || 9999999
     iconNumber := DllCall("ImageList_ReplaceIcon", "uint", imageListID, "int", -1, "uint", IconHandles[iconId]) + 1
     window.icon := iconHandle
-    if (removed || iconNumber < 1) {
-      removedRows.Push(wid)
-    } else {
+    if (iconNumber > 0) {
       iconCount+=1
       IconArray[iconId] := {"icon":"Icon" . iconNumber, "num": iconNumber} 
     }
@@ -834,7 +839,7 @@ chromiumGetTabNames(debugPort) {
     }
     return filtered
   } catch e {
-    OutputDebug, % e
+    OutputDebug, % e "`n"
   }
 }
 
@@ -848,7 +853,7 @@ chromiumFocusTab(debugPort, title, id) {
     WinActivate
     ControlFocus, ahk_class Chrome_WidgetWin_1
   } catch e {
-    OutputDebug, % e
+    OutputDebug, % e "`n"
   }
 }
 
@@ -861,7 +866,7 @@ TCMatch(aHaystack, aNeedle) {
   }
   If ( aNeedle ~= "^[^\?<*]" && DefaultTCSearch )
     aNeedle := DefaultTCSearch . aNeedle
-return DllCall(tcMatch, "WStr", aNeedle, "WStr", aHaystack)
+  return DllCall(tcMatch, "WStr", aNeedle, "WStr", aHaystack)
 }
 
 FadeHide() {
