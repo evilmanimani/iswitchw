@@ -45,9 +45,9 @@ global hideScrollBars := true
 ;   * - for srch    
 ;   < - for simularity
 ; recommended '*' for fast fuzzy searching; you can set one of the other search modes as default here instead if destired
-DefaultTCSearch := "*" 
+DefaultTCSearch := "<" 
 
-; Activate the window if it's the only match
+; Activate the window if it's the only match (works best with regex/simularity)
 activateOnlyMatch := false
 
 ; Hides the UI when focus is lost!
@@ -102,9 +102,10 @@ vivaldiDebugPort := 5000
 global initialLoadComplete := false
 , browserTabObj
 , switcher_id
-, debounced := false
-, refresh_queued := false
-, debounce_interval := 100
+, version := "0.1"
+; , debounced := false
+; , refresh_queued := false
+; , debounce_interval := 100
 
 #SingleInstance force
 #WinActivateForce
@@ -136,6 +137,8 @@ if IsObject(shortcutFolders) {
         || !(A_LoopFileName ~= "^.*\.(jpe?g|gif|png|docx?|xls|exe|txt|lnk)$"))
         continue
       fileList.Push({"fileName":A_LoopFileName,"path":A_LoopFileFullPath})
+      if fileList.Count() > 500
+        break
     }
   }
 }
@@ -151,27 +154,27 @@ for _, e in fileList {
 }
 fileList := temp
 
+defaultFont(size := 10, gid := 1) {
+  global 
+  Gui, %gid%:Font, s%size% cEEE8D5, Segoe UI
+}
 ; -- still working on options
-; Menu, Context, Add, Options, MenuHandler
+Menu, Context, Add, Options, MenuHandler
 Menu, Context, Add, Exit, MenuHandler
-/* 
-Gui, Settings:Margin, 4, 5
-Gui, Settings: +LastFound +AlwaysOnTop -Caption +ToolWindow
-Gui, Settings:Color, black,0x2e2d2d
-*/
+
 Gui, +LastFound +AlwaysOnTop +ToolWindow -Caption -Resize -DPIScale +Hwndswitcher_id
 Gui, Color, black, 191919
 Gui, Margin, 8, 10
-Gui, Font, s14 cEEE8D5, Segoe MDL2 Assets
+Gui, Font, s14 cEEE8D5, Segoe MDL2 Assets ; magnifying glass icon
 Gui, Add, Text, ym, % Chr(0xE721)
-Gui, Font, s12 cEEE8D5, Segoe UI
+defaultFont(12) 
 Gui, Add, Text, w420 R1 x+10 vEdit1 ym-2 ;-E0x200,
-Gui, Font, s10 cEEE8D5, Lucida Sans Typewriter
-Gui, Add, Text, w80 Right vCurrentRow ym -E0x200,
-Gui, Font, s10 cEEE8D5, Segoe UI
-Gui, Add, ListView, % (hideScrollbars ? "x0" : "x9") " y+12 w490 h500 -Hdr -Multi Count10 vlist hwndHLV gListViewFunc AltSubmit +LV0x100 +LV0x10000 +LV0x20 -E0x200", index|title|proc|tab
+Gui, Font, s10 cEEE8D5, Lucida Sans Typewriter 
+Gui, Add, Text, w80 Right vCurrentRow ym -E0x200 ; row count
+defaultFont(10) 
+Gui, Add, ListView, x9 y+12 w490 h500 -Hdr -Multi Count10 vlist hwndHLV gListViewFunc AltSubmit +LV0x100 +LV0x10000 +LV0x20 -E0x200, index|title|proc|tab
 ; listview styles: LV0x100 - flat scrollbars, LV0x10000 - double-buffering, LV0x20 - full row select, -E0x200 -  WS_EX_CLIENTEDGE (disabled)
-Gui, Show, , Window Switcher
+Gui, Show, NoActivate, iswitchw - Window Switcher
 WinWait, ahk_id %switcher_id%, , 1
 WinSet, Transparent, 0, ahk_id %switcher_id%
 ; if gui_pos
@@ -179,9 +182,63 @@ WinSet, Transparent, 0, ahk_id %switcher_id%
 LV_ModifyCol(4,0)
 Resize()
 WinHide, ahk_id %switcher_id%
+
+allOptions := [{var: "compact", label: "Use small listview icons", default: true}
+, {var: "hideScrollBars", label: "Hide listview scrollbars", default: true}
+, {var: "activateOnlyMatch", label: "Automatically activate sole match", default: false}
+, {var: "hideWhenFocusLost", label: "Automatically hide UI when focus is lost", default: true}
+, {var: "refreshEveryKeystroke", label: "Fully refresh listview on every keystroke", default: false}
+, {var: "chromeDebugPort", label: "Debug port for Chrome", default: 9222}
+, {var: "vivaldiDebugPort", label: "Debug port for Vivaldi", default: 5000}]
+
+Gui, Settings:Margin, 4, 5
+Gui, Settings:+LastFound +AlwaysOnTop -Caption +ToolWindow +Hwndsettings_id
+Gui, Settings:Color, black,0x2e2d2d
+Gui, Settings:Font, s8 cEEE8D5 Italic
+Gui, Settings:Add, Text, x10 y5, % "iswitchw v" . version
+Gui, Settings:Font, s8 Norm, Segoe MDL2 Assets
+Gui, Settings:Add, Text, x162 y5 vsettingsGuiClose gcloseSettings 0x100, % Chr(0xE106)
+Gui, Settings:Font, , Segoe UI
+for i, opt in allOptions {
+  def := opt.default
+  var := opt.var
+  optstr := Format("hwndh{1:} v{1:} x10",opt.var) 
+  if (def = 0 || def = 1) {
+    Gui, Settings:Add, Checkbox, % optstr . " w300 Checked" . %var%, % opt.label
+  } else {
+    Gui, Settings:Add, Edit, % optstr . " Number", % def
+    Gui, Settings:Add, Text, x+5 yp w150, % opt.label
+  }
+}
+Gui, Settings:Add, Button, gsaveSettings x10, Save
+
+closeSettings() {
+  global allOptions
+  for _, ctl in allOptions {
+    var := ctl.var
+    GuiControl, , % var, % %var%    
+  }
+  Gui, Settings:Hide
+}
+
+saveSettings() {
+  global
+  WinWaitClose, ahk_id %switcher_id%
+  Gui, Settings:Submit
+}
+
+tooltip(text := "", timeout := 3) { 
+  static func := Func("tooltip").Bind()
+  Tooltip, % text
+  if (text) {
+    SetTimer, % func, % -(timeout * 1000)
+  }
+}
+
 LVColor := new LV_Colors(HLV)
 LVColor.Critical := "On"
 LVColor.SelectionColors(0x3c3c3c)
+
 ; Add hotkeys for number row and pad, to focus corresponding item number in the list 
 numkey := [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, "Numpad1", "Numpad2", "Numpad3", "Numpad4", "Numpad5", "Numpad6", "Numpad7", "Numpad8", "Numpad9", "Numpad0"]
 for i, e in numkey {
@@ -213,8 +270,17 @@ GuiContextMenu() {
 }
 
 MenuHandler() {
+  global
   Switch A_ThisMenuItem {
-    Case "Options"  : return
+    Case "Options"  :
+      ; ihook.Stop()
+      FadeHide() 
+      Gui, Settings:Show, h200, iswitch Settings
+      pos := guiPos(settings_id)
+      w := pos.w, h := pos.h
+      WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %settings_id% ; rounded corners
+      GuiControl, Settings:Move, settingsGuiClose, % "x" w - 20 
+      WinSet, Transparent, 225, ahk_id %settings_id%
     Case "Exit"     : ExitApp 
   }
 }
@@ -233,7 +299,7 @@ onKeyDown(ihook, vk, sc) {
     || vk = ctrl_w && ctrl_held
   correct := vk = backspace 
   if (vk = ctrl_q) {
-    ihook.Stop()
+    ; ihook.Stop()
     FadeHide()
   }
   if (clear) {
@@ -258,39 +324,41 @@ onChar(ihook, char) {
   }
 }
 
-debounce() {
-  debounced := false
-  if (refresh_queued) {
-    RefreshWindowList()
-  }
-  refresh_queued := false
-}
+; debounce() {
+;   debounced := false
+;   if (refresh_queued) {
+;     RefreshWindowList()
+;   }
+;   refresh_queued := false
+; }
 
 callRefresh(search := "") {
   Gui, Font, s12 cEEE8D5, Segoe UI
   GuiControl, , Edit1, % search
-  if !search
-    debounce_interval := 100
-  if (debounced) {
-    if !search 
-      refresh_queued := true
-    return
-  }
-  debounced := true
-  SetTimer, debounce, % -debounce_interval
+  ; if !search
+  ;   debounce_interval := 100
+  ; if (debounced) {
+  ;   if !search 
+  ;     refresh_queued := true
+  ;   return
+  ; }
+  ; debounced := true
+  ; SetTimer, debounce, % -debounce_interval
   func := Func("RefreshWindowList").bind(search)
   SetTimer, % func, -1
 }
 
 onEnd(ihook) {
   GuiControl, , Edit1
+  ihook.KeyOpt("{all}", "-I")
   if ihook.EndReason != "EndKey"
     return
   OutputDebug, % ih.EndKey
   if ihook.EndKey == "Enter" {
     ActivateWindow()
   }
-  FadeHide()
+  if WinExist("ahk_id" switcher_id)
+    FadeHide()
 }
 ;----------------------------------------------------------------------
 ;
@@ -341,6 +409,7 @@ Tab::         ; ''
 ^u::          ; ''
 *PgDn::        ; Jump down 4 rows
 ^d::          ; ''
+^x::          ; close highlighted window
 *Home::       ; Jump to top
 *End::        ; Jump to bottom
 !F4::         ; Quit
@@ -370,6 +439,8 @@ KeyHandler() {
       Else If (row < 1)
         row := page ? 1 : LV_GetCount()
       LV_Modify(row, "Select Vis")
+    Case "^x":
+      ActivateWindow(,, true)
   }
 }
 
@@ -392,6 +463,14 @@ SaveTimer() {
   CoordMode, Pixel, Screen
   WinGetPos, x, y, w, h, % "ahk_id" switcher_id
   IniWrite, % Format("{} {} {} {}", x, y, w, h) , settings.ini, position, gui_pos
+}
+
+guiPos(id) {
+  global switcher_id
+  if !id
+    id := switcher_id
+  WinGetPos, x, y, w, h, % "ahk_id" id
+  return {x:x,y:y,w:w,h:h}
 }
 
 ; Hides the UI if it loses focus
@@ -470,12 +549,12 @@ ParseAllWindows() {
       continue
     if title {
         procName := GetProcessName(next)
-      if (procName = "vivaldi") { 
+      if (procName = "vivaldi" && browserTabObj.vivaldi.Count() > 0) { 
         if (!vivaldi_pushed) {
           vivaldi_pushed := true
           windows.Push(browserTabObj.vivaldi*)
         }
-      } else if (procName = "chrome") {
+      } else if (procName = "chrome" && browserTabObj.chrome.Count() > 0) {
         if (!chrome_pushed) {
           chrome_pushed := true
           windows.Push(browserTabObj.chrome*)
@@ -534,14 +613,26 @@ findVSCodeTabs(hwnd) {
 
 ParseBrowserWindows() {
   global chromeDebugPort, vivaldiDebugPort
+  chromePortOpen := vivaldiPortOpen := false
   obj := Object()
+  list := NetStat()
+  for _, con in list {
+    if con.proto = "TCP" && con.ipv = 4 {
+      if (con.localPort = vivaldiDebugPort) 
+        vivaldiPortOpen := true
+      if (con.localPort = chromeDebugPort)
+        chromePortOpen := true
+      if (chromePortOpen && vivaldiPortOpen)
+        break
+    }
+  }
   obj.chrome := []
-  if WinExist("ahk_exe chrome.exe") {
+  if WinExist("ahk_exe chrome.exe") && chromePortOpen {
     for _, o in chromiumGetTabNames(chromeDebugPort)
       obj.chrome.Push({"id":o.id, "title": o.title, "procName": "Chrome tab", "url": o.url})
   }
   obj.vivaldi := []
-  if WinExist("ahk_exe vivaldi.exe") {
+  if WinExist("ahk_exe vivaldi.exe") && vivaldiPortOpen {
     for _, o in chromiumGetTabNames(vivaldiDebugPort)
       obj.vivaldi.Push({"id":o.id, "title": o.title, "procName": "Vivaldi tab", "url": o.url})
   }
@@ -555,7 +646,7 @@ ParseBrowserWindows() {
 }
 
 filterWindows(allwindows, search) {
-  global fileList, DefaultTCSearch, debounce_interval
+  global fileList, DefaultTCSearch, debounce_interval, ihook
   static lastResultLen := 0, lastSearch := "", last_windows := []
   start := A_TickCount
   found := InStr(search, lastSearch)
@@ -588,14 +679,19 @@ filterWindows(allwindows, search) {
   if search && resultLen <= 100
     result := ObjectSort(result, "score",,true)
   updateSearchStringColour(resultLen, lastResultLen)
+  if (resultLen <= 1) {
+    ihook.KeyOpt("{all}", "I")
+  } else {
+    ihook.KeyOpt("{all}", "-I")
+  }
   if (resultLen == 0) {
     result := last_windows
     resultLen := result.Count()
-  }
+  } 
   lastResultLen := resultLen > 0 ? resultLen : lastResultLen
   last_windows := result
   elapsed := A_TickCount - start
-  debounce_interval := elapsed + 25
+  ; debounce_interval := elapsed + 25
   OutputDebug, % "Filtering took " elapsed "ms`n"
   return [newSearch, result]
 }
@@ -616,7 +712,7 @@ updateSearchStringColour(len, last_len) {
   GuiControl, Font, Edit1
 }
 
-RefreshWindowList(search := "") {
+RefreshWindowList(search := "", removeEntry := "") {
   global fileList, refreshEveryKeystroke, activateOnlyMatch, allRowCount
   static iconArray := Object(), allwindows
   allwindows := ParseAllWindows()
@@ -626,6 +722,13 @@ RefreshWindowList(search := "") {
   newSearch := result.1
   windows := result.2
   windows_dict := {}
+  if (removeEntry) {
+    for i, e in windows
+      if (e.id = removeEntry) {
+        windows.RemoveAt(i)        
+        break
+      }
+  }
   for _, o in windows {
     windows_dict[o.id] := o
   }
@@ -633,38 +736,52 @@ RefreshWindowList(search := "") {
   windowLen := windows.Count()
   if (newSearch || iconArray.Count() == 0)
     iconArray := generateIconList(windows)
-  if (windowLen = 1 && activateOnlyMatch) {
-    ActivateWindow(1, windows_dict)
-  } else if (windowLen > 0) {
+  if (windowLen > 0) {
     ActivateWindow("", windows_dict) ; update function with current windows list
-    func := Func("DrawListView").Bind(windows, iconArray)
-    SetTimer, % func, -1
+    if (windowLen = 1 && activateOnlyMatch) {
+      ActivateWindow(windows[1])
+    } else {
+      func := Func("DrawListView").Bind(windows, iconArray)
+      SetTimer, % func, -1
+    }
   }
   return windows
 }
 
-ActivateWindow(rowNum := "", updateWindows := false) {
+ActivateWindow(rowNum := "", updateWindows := false, closeWindow := false) {
   static windows
-  global vivaldiDebugPort, chromeDebugPort
+  global vivaldiDebugPort, chromeDebugPort, ihook
   if IsObject(updateWindows) {
     windows := updateWindows
     if (!rowNum)
       return
   }
-  If !rowNum 
-    rowNum:= LV_GetNext("F")
-  If (rowNum > LV_GetCount())
-    return
-  updateSearchStringColour(0,0)
-  LV_GetText(wid, rowNum, 4)
-  FadeHide()
-  window := windows[wid]
+  if IsObject(rowNum) {
+    window := rowNum
+  } else {
+    If !rowNum 
+      rowNum:= LV_GetNext("F")
+    If (rowNum > LV_GetCount())
+      return
+    LV_GetText(wid, rowNum, 4)
+    window := windows[wid]
+  }
+  if (!closeWindow) {
+    updateSearchStringColour(0,0)
+    FadeHide()
+  }
   procName := window.procName
   title := window.title
   num := window.num
   id := window.id
   If window.HasKey("path") {
-    Run, % """" window.path """" 
+    if (!closeWindow)
+      Run, % """" window.path """" 
+  } Else If (closeWindow) {
+    if (WinExist("ahk_id" id)) {
+      WinClose, ahk_id %id%
+      RefreshWindowList(ihook.Input, wid)
+    }
   } Else {
     If (procName = "Vivaldi tab") {
       chromiumFocusTab(vivaldiDebugPort, title, id)
@@ -828,7 +945,7 @@ chromiumGetTabNames(debugPort) {
     whr := ComObjCreate("WinHttp.WinHttpRequest.5.1")
     whr.Open("GET", "http://127.0.0.1:" debugPort "/json/list", true)
     whr.Send()
-    whr.WaitForResponse(2)
+    whr.WaitForResponse()
     v := whr.ResponseText
     obj := JSON.Load(v)
     filtered := []
@@ -839,7 +956,7 @@ chromiumGetTabNames(debugPort) {
     }
     return filtered
   } catch e {
-    OutputDebug, % e "`n"
+    OutputDebug, % e.message "`n"
   }
 }
 
@@ -870,12 +987,15 @@ TCMatch(aHaystack, aNeedle) {
 }
 
 FadeHide() {
+  global ihook
   static func := Func("FadeGui").Bind("out")
+  ihook.Stop()
   WinSet, AlwaysOnTop, Off, ahk_id %switcher_id%
   SetTimer, % func, -1
 }
 
 FadeGui(in_or_out := "in") {
+  global
   static max_opacity := 225, step := 25, delay := 1
   ListLines, Off
   if (in_or_out = "out") {
@@ -889,7 +1009,7 @@ FadeGui(in_or_out := "in") {
     Gui, Hide
   } else {
     opacity := 0
-    Gui, Show, NoActivate, Window Switcher
+    Gui, 1:Show, % hideWhenFocusLost ? "" : "NoActivate"
     WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
     WinSet, Transparent, 0, ahk_id %switcher_id%
     while (opacity < max_opacity) {
@@ -1046,7 +1166,7 @@ Resize(width := "", height := "", last_width := 0) {
   w_diff := width - last_width
   ControlGetPos, CurrentRow_x, , w, , Static3
   WinSet, Region , 0-0 w%width% h%height% R15-15, ahk_id %switcher_id%
-  GuiControl, Move, list, % "w" (hideScrollBars ? width + 20 : width - 20) " h" height - 50
+  GuiControl, Move, list, % (hideScrollbars ? "x0" : "x9") . "w" . (hideScrollBars ? width + 20 : width - 20) " h" height - 50
   GuiControl, Move, Edit1, % "w" width - 160 
   if w_diff
     GuiControl, Move, CurrentRow, % "x" CurrentRow_x + w_diff
@@ -1237,4 +1357,77 @@ objectSort(obj, keyName="", callbackFunc="", reverse=false)
 	}
 	
 	return sorted
+}
+
+; by Bentschi from https://www.autohotkey.com/boards/viewtopic.php?t=4372
+NetStat()
+{
+  c := 32
+  static status := {1:"CLOSED", 2:"LISTEN", 3:"SYN-SENT", 4:"SYN-RECEIVED"
+  , 5:"ESTABLISHED", 6:"FIN-WAIT-1", 7:"FIN-WAIT-2", 8:"CLOSE-WAIT"
+  , 9:"CLOSING", 10:"LIST-ACK", 11:"TIME-WAIT", 12:"DELETE-TCB"}
+  iphlpapi := DllCall("LoadLibrary", "str", "iphlpapi", "ptr")
+  list := []
+  VarSetCapacity(tbl, 4+(s := (20*c)), 0)
+  while (DllCall("iphlpapi\GetTcpTable", "ptr", &tbl, "uint*", s, "uint", 1)=122)
+    VarSetCapacity(tbl, 4+s, 0)
+  Loop, % NumGet(tbl, 0, "uint")
+  {
+    o := 4+((A_Index-1)*20)
+    t := {proto:"TCP", ipv:4}
+    t.localIP := ((dw := NumGet(tbl, o+4, "uint"))&0xff) "." ((dw&0xff00)>>8) "." ((dw&0xff0000)>>16) "." ((dw&0xff000000)>>24)
+    t.localPort := (((dw := NumGet(tbl, o+8, "uint"))&0xff00)>>8)|((dw&0xff)<<8)
+    t.remoteIP := ((dw := NumGet(tbl, o+12, "uint"))&0xff) "." ((dw&0xff00)>>8) "." ((dw&0xff0000)>>16) "." ((dw&0xff000000)>>24)
+    t.remotePort := (((dw := NumGet(tbl, o+16, "uint"))&0xff00)>>8)|((dw&0xff)<<8)
+    t.status := status[NumGet(tbl, o, "uint")]
+    list.insert(t)
+  }
+  if (DllCall("GetProcAddress", "ptr", iphlpapi, "astr", "GetTcp6Table", "ptr"))
+  {
+    VarSetCapacity(tbl, 4+(s := (52*c)), 0)
+    while (DllCall("iphlpapi\GetTcp6Table", "ptr", &tbl, "uint*", s, "uint", 1)=122)
+      VarSetCapacity(tbl, 4+s, 0)
+    Loop, % NumGet(tbl, 0, "uint")
+    {
+      VarSetCapacity(str, 94, 0)
+      o := 4+((A_Index-1)*52)
+      t := {proto:"TCP", ipv:6}
+      t.localIP := (DllCall("ws2_32\InetNtop", "uint", 23, "ptr", &tbl+o+4, "ptr", &str, "uint", 94)) ? StrGet(&str) : ""
+      t.localScopeId := (((dw := NumGet(tbl, o+20, "uint"))&0xff)<<24) | ((dw&0xff00)<<8) | ((dw&0xff0000)>>8) | ((dw&0xff000000)>>24)
+      t.localPort := (((dw := NumGet(tbl, o+24, "uint"))&0xff00)>>8)|((dw&0xff)<<8)
+      t.remoteIP := (DllCall("ws2_32\InetNtop", "uint", 23, "ptr", &tbl+o+28, "ptr", &str, "uint", 94)) ? StrGet(&str) : ""
+      t.remoteScopeId := (((dw := NumGet(tbl, o+44, "uint"))&0xff)<<24) | ((dw&0xff00)<<8) | ((dw&0xff0000)>>8) | ((dw&0xff000000)>>24)
+      t.remotePort := (((dw := NumGet(tbl, o+48, "uint"))&0xff00)>>8)|((dw&0xff)<<8)
+      t.status := status[NumGet(tbl, o, "uint")]
+      list.insert(t)
+    }
+  }
+  VarSetCapacity(tbl, 4+(s := (8*c)), 0)
+  while (DllCall("iphlpapi\GetUdpTable", "ptr", &tbl, "uint*", s, "uint", 1)=122)
+    VarSetCapacity(tbl, 4+s, 0)
+  Loop, % NumGet(tbl, 0, "uint")
+  {
+    o := 4+((A_Index-1)*20)
+    t := {proto:"UDP", ipv:4}
+    t.localIP := ((dw := NumGet(tbl, o, "uint"))&0xff) "." ((dw&0xff00)>>8) "." ((dw&0xff0000)>>16) "." ((dw&0xff000000)>>24)
+    t.localPort := (((dw := NumGet(tbl, o+4, "uint"))&0xff00)>>8)|((dw&0xff)<<8)
+    list.insert(t)
+  }
+  if (DllCall("GetProcAddress", "ptr", iphlpapi, "astr", "GetUdp6Table", "ptr"))
+  {
+    VarSetCapacity(tbl, 4+(s := (52*c)), 0)
+    while (DllCall("iphlpapi\GetUdp6Table", "ptr", &tbl, "uint*", s, "uint", 1)=122)
+      VarSetCapacity(tbl, 4+s, 0)
+    Loop, % NumGet(tbl, 0, "uint")
+    {
+      VarSetCapacity(str, 94, 0)
+      o := 4+((A_Index-1)*52)
+      t := {proto:"UDP", ipv:6}
+      t.localIP := (DllCall("ws2_32\InetNtop", "uint", 23, "ptr", &tbl+o, "ptr", &str, "uint", 94)) ? StrGet(&str) : ""
+      t.localScopeId := (((dw := NumGet(tbl, o+16, "uint"))&0xff)<<24) | ((dw&0xff00)<<8) | ((dw&0xff0000)>>8) | ((dw&0xff000000)>>24)
+      t.localPort := (((dw := NumGet(tbl, o+20, "uint"))&0xff00)>>8)|((dw&0xff)<<8)
+      list.insert(t)
+    }
+  }
+  return list
 }
