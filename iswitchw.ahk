@@ -27,13 +27,12 @@
 ;
 
 ; Use small icons in the listview
-global compact := true
-
+; global compact := true
 ; A bit of a hack, but this 'hides' the scroll bars, rather the listview is    
 ; sized out of bounds, you'll still be able to use the scroll wheel or arrows
 ; but when resizing the window you can't use the left edge of the window, just
 ; the top and bottom right.
-global hideScrollBars := true
+; global hideScrollbars := true
 
 ; Uses tcmatch.dll included with QuickSearch eXtended by Samuel Plentz
 ; https://www.ghisler.ch/board/viewtopic.php?t=22592
@@ -41,17 +40,18 @@ global hideScrollBars := true
 ; Included in lib folder, no license info that I could find
 ; see readme in lib folder for details, use the included tcmatch.ahk to change settings
 ; By default, for different search modes, start the string with:
-;   ? - for regex
+;   ? - for regex (seems janky, don't use this atm)
 ;   * - for srch    
 ;   < - for simularity
+;     - (blank) for simple search
 ; recommended '*' for fast fuzzy searching; you can set one of the other search modes as default here instead if destired
-DefaultTCSearch := "<" 
+global defaultTCSearch := "" 
 
 ; Activate the window if it's the only match (works best with regex/simularity)
-activateOnlyMatch := false
+; activateOnlyMatch := false
 
-; Hides the UI when focus is lost!
-hideWhenFocusLost := false
+; Hides the UI when focus is lost! (waow!)
+; hideWhenFocusLost := false
 
 ; Window titles containing any of the listed substrings are filtered out from results
 ; useful for things like  hiding improperly configured tool windows or screen
@@ -63,18 +63,17 @@ filters := []
 ; Enter new paths as an array
 ; todo: show file extensions/path in the list, etc.
 ; shortCutFolders := []
-; shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon]
-shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon]
 
 ; how far to search into sub-folders for the above shortcut folders
 ; depending on the shortcut folder, setting this too high will probably increase
 ; startup-time exponentially, if it doesn't lock up first that is
-recurse_limit := 2
-
+; recurse_limit := 2
+; fileLimit := 500 ; maximum total files
+; shortcutFolders := [A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon]
 ; Set this to true to update the list of windows every time the search is
 ; updated. This is usually not necessary and creates additional overhead, so
 ; it is disabled by default. 
-refreshEveryKeystroke := false
+; refreshEveryKeystroke := false
 
 
 ; To list browser tabs for Chrome or Vivaldi, you'll need to enable remote debugging
@@ -83,9 +82,9 @@ refreshEveryKeystroke := false
 ; you can set the port number to whatever you with, however ensure that they're set to 
 ; different ports for each browser, then change the below values to reflect it.
 
-chromeDebugPort := 9222
+; chromeDebugPort := 9222
 
-vivaldiDebugPort := 5000
+; vivaldiDebugPort := 5000
 
 ;----------------------------------------------------------------------
 ;
@@ -100,9 +99,25 @@ vivaldiDebugPort := 5000
 ;----------------------------------------------------------------------
 
 global initialLoadComplete := false
+, version := "0.1"
+, ihook
 , browserTabObj
 , switcher_id
-, version := "0.1"
+, settings_id
+, compact
+, fileExtensionList 
+, activateOnlyMatch
+, hideScrollbars
+, hideWhenFocusLost
+, refreshEveryKeystroke
+, chromeDebugPort
+, vivaldiDebugPort
+, shortcutFolders
+, recurse_limit
+, fileLimit
+, regexpMeta := "^$*+?][\|(){}."
+, chromeTabObj := Object()
+, vivaldiTabObj := Object()
 ; , debounced := false
 ; , refresh_queued := false
 ; , debounce_interval := 100
@@ -118,46 +133,8 @@ SaveTimer := Func("SaveTimer")
 OnExit("Quit")
 
 ; Load saved position from settings.ini
-IniRead, gui_pos, settings.ini, position, gui_pos, 0
+; IniRead, gui_pos, settings.ini, position, gui_pos, 0
 
-OnMessage(0x20, "WM_SETCURSOR")
-OnMessage(0x200, "WM_MOUSEMOVE")
-OnMessage(0x201, "WM_LBUTTONDOWN")
-
-fileList := []
-recurse_limit := 2
-if IsObject(shortcutFolders) {
-  for i, e in shortcutFolders {
-    rlimit := InStr(e, "Documents") ? 2 : recurse_limit
-    StrReplace(e, "\", "\", parent_dir_count)
-    Loop, Files, % e "\*", R
-    {
-      StrReplace(A_LoopFilePath, "\", "\", dir_count)
-      if ( dir_count - parent_dir_count > rlimit
-        || !(A_LoopFileName ~= "^.*\.(jpe?g|gif|png|docx?|xls|exe|txt|lnk)$"))
-        continue
-      fileList.Push({"fileName":A_LoopFileName,"path":A_LoopFileFullPath})
-      if fileList.Count() > 500
-        break
-    }
-  }
-}
-temp := []
-for _, e in fileList {
-  path := e.path 
-  SplitPath, path, OutFileName, OutDir, OutExt, OutNameNoExt, OutDrive
-  RegExMatch(OutDir, "\\(\w+)$", folder)
-  temp.Push({"procname":folder1
-                  ,"title": OutExt == "lnk" ? OutNameNoExt  : OutFileName
-                  ,"path":e.path
-                  ,"id": e.path})
-}
-fileList := temp
-
-defaultFont(size := 10, gid := 1) {
-  global 
-  Gui, %gid%:Font, s%size% cEEE8D5, Segoe UI
-}
 ; -- still working on options
 Menu, Context, Add, Options, MenuHandler
 Menu, Context, Add, Exit, MenuHandler
@@ -174,6 +151,19 @@ Gui, Add, Text, w80 Right vCurrentRow ym -E0x200 ; row count
 defaultFont(10) 
 Gui, Add, ListView, x9 y+12 w490 h500 -Hdr -Multi Count10 vlist hwndHLV gListViewFunc AltSubmit +LV0x100 +LV0x10000 +LV0x20 -E0x200, index|title|proc|tab
 ; listview styles: LV0x100 - flat scrollbars, LV0x10000 - double-buffering, LV0x20 - full row select, -E0x200 -  WS_EX_CLIENTEDGE (disabled)
+
+global settingsXMargin := 4
+Gui, Settings:Margin, % settingsXMargin, 5
+Gui, Settings:+Owner1 +LastFound +AlwaysOnTop -Caption +Hwndsettings_id
+Gui, Settings:Color, black,0x2e2d2d
+Gui, Settings:Font, s8 cEEE8D5 Italic
+Gui, Settings:Add, Text, x10 y5 hwndhsettingsTitle, % "iswitchw v" . version
+Gui, Settings:Font, s8 Norm, Segoe MDL2 Assets
+Gui, Settings:Add, Text, x162 y5 vsettingsGuiClose gcloseSettings 0x100, % Chr(0xE106)
+Gui, Settings:Font, , Segoe UI
+ReadOrWriteINI(0,1) ; reads settings.ini and initializes controls for settings gui
+Gui, Settings:Add, Button, hwndhsaveSettings gsaveSettings x10, Save
+
 Gui, Show, NoActivate, iswitchw - Window Switcher
 WinWait, ahk_id %switcher_id%, , 1
 WinSet, Transparent, 0, ahk_id %switcher_id%
@@ -183,57 +173,7 @@ LV_ModifyCol(4,0)
 Resize()
 WinHide, ahk_id %switcher_id%
 
-allOptions := [{var: "compact", label: "Use small listview icons", default: true}
-, {var: "hideScrollBars", label: "Hide listview scrollbars", default: true}
-, {var: "activateOnlyMatch", label: "Automatically activate sole match", default: false}
-, {var: "hideWhenFocusLost", label: "Automatically hide UI when focus is lost", default: true}
-, {var: "refreshEveryKeystroke", label: "Fully refresh listview on every keystroke", default: false}
-, {var: "chromeDebugPort", label: "Debug port for Chrome", default: 9222}
-, {var: "vivaldiDebugPort", label: "Debug port for Vivaldi", default: 5000}]
-
-Gui, Settings:Margin, 4, 5
-Gui, Settings:+LastFound +AlwaysOnTop -Caption +ToolWindow +Hwndsettings_id
-Gui, Settings:Color, black,0x2e2d2d
-Gui, Settings:Font, s8 cEEE8D5 Italic
-Gui, Settings:Add, Text, x10 y5, % "iswitchw v" . version
-Gui, Settings:Font, s8 Norm, Segoe MDL2 Assets
-Gui, Settings:Add, Text, x162 y5 vsettingsGuiClose gcloseSettings 0x100, % Chr(0xE106)
-Gui, Settings:Font, , Segoe UI
-for i, opt in allOptions {
-  def := opt.default
-  var := opt.var
-  optstr := Format("hwndh{1:} v{1:} x10",opt.var) 
-  if (def = 0 || def = 1) {
-    Gui, Settings:Add, Checkbox, % optstr . " w300 Checked" . %var%, % opt.label
-  } else {
-    Gui, Settings:Add, Edit, % optstr . " Number", % def
-    Gui, Settings:Add, Text, x+5 yp w150, % opt.label
-  }
-}
-Gui, Settings:Add, Button, gsaveSettings x10, Save
-
-closeSettings() {
-  global allOptions
-  for _, ctl in allOptions {
-    var := ctl.var
-    GuiControl, , % var, % %var%    
-  }
-  Gui, Settings:Hide
-}
-
-saveSettings() {
-  global
-  WinWaitClose, ahk_id %switcher_id%
-  Gui, Settings:Submit
-}
-
-tooltip(text := "", timeout := 3) { 
-  static func := Func("tooltip").Bind()
-  Tooltip, % text
-  if (text) {
-    SetTimer, % func, % -(timeout * 1000)
-  }
-}
+scanFiles()
 
 LVColor := new LV_Colors(HLV)
 LVColor.Critical := "On"
@@ -248,15 +188,19 @@ for i, e in numkey {
     Hotkey, % "#" e, % KeyFunc
 }
 
-chromeTabObj := Object(), vivaldiTabObj := Object()
-RefreshWindowList()
-global ihook
 ihook := InputHook("", "{Esc}{Enter}")
 ihook.OnChar := Func("onChar")
 ihook.onKeyDown := Func("onKeyDown")
 ihook.VisibleNonText := false
 ihook.NotifyNonText := true
 ihook.OnEnd := Func("onEnd")
+
+RefreshWindowList()
+OnMessage(0x20, "WM_SETCURSOR")
+OnMessage(0x200, "WM_MOUSEMOVE")
+OnMessage(0x201, "WM_LBUTTONDOWN")
+
+initialLoadComplete := true ; set flag to enable ShowSwitcher hotkey
 Return
 
 #Include lib\Accv2.ahk
@@ -264,18 +208,96 @@ Return
 #Include lib\JEE_AccHelperFuncs.ahk
 #Include lib\Class_LV_Colors.ahk
 
-GuiContextMenu() {
+; scan provided file paths to create file list
+scanFiles() {
+  global
+  fileList := []
+  fileIndex := {}
+  recurse_limit := 2
+  fileExtensionListArray := StrSplit(fileExtensionList, ",", " `t`n`r")
+  for idx, e in fileExtensionListArray {
+    fileExtensionRegex .= e . (idx < fileExtensionListArray.MaxIndex() ? "|" : "")
+  }
+  shortcutFoldersArray := StrSplit(shortcutFolders, ",", " `t`n`r")
+  if IsObject(shortcutFoldersArray) {
+    for i, e in shortcutFoldersArray {
+      if e ~= "^A_" ; resolve built in variables to actual path, i.e. A_Desktop
+        e := %e%
+      rlimit := InStr(e, "Documents") ? 2 : recurse_limit ; hard limit Documents to recurse two levels
+      StrReplace(e, "\", "\", parent_dir_count)
+      Loop, Files, % e "\*", R
+      {
+        StrReplace(A_LoopFilePath, "\", "\", dir_count)
+        if ( dir_count - parent_dir_count > rlimit
+          || !(A_LoopFileName ~= "^.*\.(" . fileExtensionRegex . ")$")) ; TODO: make this configurable in options? (csv)
+          continue
+        if !fileIndex.HasKey(A_LoopFileName) {
+          fileIndex[A_LoopFileName] := A_Index
+          fileList.Push({"fileName":A_LoopFileName,"path":A_LoopFileFullPath})
+        if fileList.Count() > fileLimit
+          break
+        }
+      }
+    }
+  }
+  fileIndex := 0
+  temp := []
+  for _, e in fileList {
+    path := e.path 
+    SplitPath, path, OutFileName, OutDir, OutExt, OutNameNoExt, OutDrive
+    RegExMatch(OutDir, "\\(\w+)$", folder)
+    temp.Push({"procname":folder1
+                    ,"title": OutExt == "lnk" ? OutNameNoExt : OutFileName
+                    ,"path":e.path
+                    ,"id": e.path})
+  }
+  fileList := temp
+}
+
+defaultFont(size := 10, gid := 1) {
+  global 
+  Gui, %gid%:Font, s%size% cEEE8D5, Segoe UI
+}
+
+closeSettings() {
+  global iniArray
+  for _, opt in iniArray {
+    var := opt[1]
+    GuiControl, , % var, % %var%    
+  }
+  Gui, Settings:Hide
+  ihook.Start()
+}
+
+saveSettings() {
+  global
+  FadeHide() 
+  WinWaitClose, ahk_id %switcher_id%
+  Gui, Settings:Submit
+  ReadOrWriteINI(1)
+  scanFiles()
+}
+
+guiContextMenu() {
   global
   Menu, Context, Show
 }
 
 MenuHandler() {
-  global
+  local opt, h, hwnd, controls, optHeight := 20
   Switch A_ThisMenuItem {
     Case "Options"  :
-      ; ihook.Stop()
-      FadeHide() 
-      Gui, Settings:Show, h200, iswitch Settings
+      ihook.Stop()
+      controls := [hsettingsTitle, hsaveSettings]
+      for _, opt in iniArray {
+        hwnd := "h" opt[1]        
+        controls.Push(%hwnd%)
+      }
+      for _, hwnd in controls {
+        ControlGetPos, , , , h, , % "ahk_id" hwnd
+        optHeight += h + settingsXMargin
+      }
+      Gui, Settings:Show, % "h" optHeight, iswitchw Settings
       pos := guiPos(settings_id)
       w := pos.w, h := pos.h
       WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %settings_id% ; rounded corners
@@ -308,6 +330,7 @@ onKeyDown(ihook, vk, sc) {
     search := ""
   }
   if (correct || clear) {
+    ihook.KeyOpt("{all}", "-I")
     callRefresh(search)
   }
   last_key := vk
@@ -344,6 +367,13 @@ callRefresh(search := "") {
   ; }
   ; debounced := true
   ; SetTimer, debounce, % -debounce_interval
+  if (search ~= "^\?" || defaultTCSearch == "?")
+    if (search ~= "^\?*\^$|\\$|^.*(\{[^\}]*|\[[^\]]*|\([^\)]*)$")
+      return
+  if (search ~= "^[\*\?<]$") {
+    updateSearchStringColour(2, 2)
+    return
+  }
   func := Func("RefreshWindowList").bind(search)
   SetTimer, % func, -1
 }
@@ -360,6 +390,21 @@ onEnd(ihook) {
   if WinExist("ahk_id" switcher_id)
     FadeHide()
 }
+
+clearInput() {
+  global
+  ihook.Stop()
+  callRefresh()
+  Sleep 50
+  LV_Modify(1, "Select Vis")
+  ihook.Start()
+}
+
+tooltipOff() {
+  ToolTip
+}
+
+#If !WinExist("ahk_id" settings_id) 
 ;----------------------------------------------------------------------
 ;
 ; Capslock to activate (feel free to change if desired)
@@ -384,19 +429,8 @@ ShowSwitcher() {
   }
 }
 
-clearInput() {
-  global
-  ihook.Stop()
-  callRefresh()
-  Sleep 50
-  LV_Modify(1, "Select Vis")
-  ihook.Start()
-}
+#If !WinExist("ahk_id" settings_id) && WinExist("ahk_id" switcher_id)
 
-tooltipOff() {
-  ToolTip
-}
-#If WinExist("ahk_id" switcher_id)
 ^[::            ; Close window
 ; ^h::          ; Backspace
 *Down::        ; Next row
@@ -446,10 +480,10 @@ KeyHandler() {
 
 ~LButton Up::
 LButtonUp() {
-  global
+  global isResizing
   If isResizing {
     Resize()
-    SetTimer, % SaveTimer, -500 
+    ; SetTimer, % SaveTimer, -500 
     ; Tooltip
     isResizing := 0
     DllCall("ReleaseCapture")
@@ -459,14 +493,13 @@ LButtonUp() {
 #if
 
 SaveTimer() {
-  global switcher_id, gui_pos
+  global gui_pos
   CoordMode, Pixel, Screen
   WinGetPos, x, y, w, h, % "ahk_id" switcher_id
   IniWrite, % Format("{} {} {} {}", x, y, w, h) , settings.ini, position, gui_pos
 }
 
 guiPos(id) {
-  global switcher_id
   if !id
     id := switcher_id
   WinGetPos, x, y, w, h, % "ahk_id" id
@@ -475,7 +508,7 @@ guiPos(id) {
 
 ; Hides the UI if it loses focus
 HideTimer() {
-  If !WinActive("ahk_id" switcher_id) {
+  If !WinExist("ahk_id" settings_id) && !WinActive("ahk_id" switcher_id) {
     FadeHide()
     SetTimer, HideTimer, Off
   }
@@ -538,7 +571,7 @@ GetAllWindows() {
 ; Fetch info on all active windows
 ;
 ParseAllWindows() {
-  global switcher_id, filters 
+  global filters 
   windows := Object()
   vivaldi_pushed := false
   chrome_pushed := false
@@ -646,7 +679,6 @@ ParseBrowserWindows() {
 }
 
 filterWindows(allwindows, search) {
-  global fileList, DefaultTCSearch, debounce_interval, ihook
   static lastResultLen := 0, lastSearch := "", last_windows := []
   start := A_TickCount
   found := InStr(search, lastSearch)
@@ -654,22 +686,28 @@ filterWindows(allwindows, search) {
     || !search 
     || lastResultLen = 0
     || refreshEveryKeystroke 
-    || DefaultTCSearch = "?" 
+    || defaultTCSearch = "?" 
     || SubStr(search, 1, 1) = "?")
   toFilter := newSearch ? allwindows : last_windows
- if (newSearch)
-    lastResultLen = 0
+  If (search ~= "^[^\?<*]" && defaultTCSearch)
+    search := defaultTCSearch . search
+  if (newSearch)
+    lastResultLen := 0
   lastSearch := search
   result := []
   filterCount := toFilter.Count()
   for i, e in toFilter {
-    str := Trim(e.procName " " e.title " " e.url)
-    match := TCMatch(str,search) 
+    str := Trim(e.title " " e.procName " " e.url)
+    if (SubStr(search, 1, 1) != "?" && defaultTCSearch != "?" ) {
+      for i, e2 in StrSplit("/\[^$.|?*+(){}")
+        str := StrReplace(str, e2, A_Space)
+    }
+    match := TCMatch(str, search) 
     if (!search || match) {
       if (search && filterCount <= 100) { ; only score/sort if there's less than 100 items
-        score := stringsimilarity.compareTwoStrings(str, search)
+        score := Format("{:.2f}", stringsimilarity.compareTwoStrings(str, search))
         if e.HasKey("path")
-         score -= 0.3, if (score < 0) score := 0 ; penalize files
+         score -= 0.30, if (score < 0.00) score := 0.00 ; penalize files
         e.score := score
       }
       result.Push(e)
@@ -677,7 +715,7 @@ filterWindows(allwindows, search) {
   }
   resultLen := result.Count()
   if search && resultLen <= 100
-    result := ObjectSort(result, "score",,true)
+    result := objectSort(result, "score", , true)
   updateSearchStringColour(resultLen, lastResultLen)
   if (resultLen <= 1) {
     ihook.KeyOpt("{all}", "I")
@@ -703,7 +741,7 @@ updateSearchStringColour(len, last_len) {
 
   if (len == 1 || len <= 1 && last_len = 1) { 
     color := green
-  } else if (last_len > 1 && len == 0) { 
+  } else if (len == 0) { 
     color := red
   } else {
     color := white
@@ -808,7 +846,7 @@ ActivateWindow(rowNum := "", updateWindows := false, closeWindow := false) {
 ; Add window list to listview
 ;
 DrawListView(windows, iconArray) {
-  Global switcher_id, hlv, compact, allRowCount
+  Global hlv, compact, allRowCount
   static max_width := 50 ; set max width for icon/number column, will adjust itself if needed
   , LVM_GETCOLUMNWIDTH := 0x101d
   LV_GetText(selectedRow, LV_GetNext(),3)
@@ -854,7 +892,6 @@ DrawListView(windows, iconArray) {
   totalRows := LV_GetCount()
   LV_Modify(1, "Select Vis")
   Resize()
-  initialLoadComplete := true ; set flag to enable ShowSwitcher hotkey
 }
 
 ; Portions of this from the example in the AutoHotkey help-file
@@ -975,14 +1012,8 @@ chromiumFocusTab(debugPort, title, id) {
 }
 
 TCMatch(aHaystack, aNeedle) {
-  global DefaultTCSearch
+  ; global defaultTCSearch
   static tcMatch := DllCall("GetProcAddress", "Ptr", DllCall("LoadLibrary", "WStr", "lib\TCMatch" . (A_PtrSize == 8 ? "64" : ""), "Ptr"), "AStr", "MatchFileW","Ptr")
-  if (SubStr(aNeedle, 1, 1) != "?" && DefaultTCSearch != "?" ) {
-    for i, e in StrSplit("/\[^$.|?*+(){}")
-      aHaystack := StrReplace(aHaystack, e, A_Space)
-  }
-  If ( aNeedle ~= "^[^\?<*]" && DefaultTCSearch )
-    aNeedle := DefaultTCSearch . aNeedle
   return DllCall(tcMatch, "WStr", aNeedle, "WStr", aHaystack)
 }
 
@@ -999,23 +1030,27 @@ FadeGui(in_or_out := "in") {
   static max_opacity := 225, step := 25, delay := 1
   ListLines, Off
   if (in_or_out = "out") {
-    opacity := max_opacity
-    WinSet, Transparent, % max_opacity, ahk_id %switcher_id%
-    while (opacity > 0) {
-      opacity -= step
-      WinSet, Transparent, % opacity, ahk_id %switcher_id%
-      Sleep delay
+    if fadeUi {
+      opacity := max_opacity
+      WinSet, Transparent, % max_opacity, ahk_id %switcher_id%
+      while (opacity > 0) {
+        opacity -= step
+        WinSet, Transparent, % opacity, ahk_id %switcher_id%
+        Sleep delay
+      }
     }
     Gui, Hide
   } else {
-    opacity := 0
-    Gui, 1:Show, % hideWhenFocusLost ? "" : "NoActivate"
+    Gui, 1:Show, % "center " . (hideWhenFocusLost ? "" : "NoActivate")
     WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
-    WinSet, Transparent, 0, ahk_id %switcher_id%
-    while (opacity < max_opacity) {
-      opacity += step
-      WinSet, Transparent, % opacity, ahk_id %switcher_id%
-      Sleep delay
+    WinSet, Transparent, % fadeUi ? 0 : max_opacity, ahk_id %switcher_id%
+    if fadeUi {
+      opacity := 0
+      while (opacity < max_opacity) {
+        opacity += step
+        WinSet, Transparent, % opacity, ahk_id %switcher_id%
+        Sleep delay
+      }
     }
     WinGetPos, , , w, h, ahk_id %switcher_id%
     WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %switcher_id% ; rounded corners
@@ -1166,12 +1201,12 @@ Resize(width := "", height := "", last_width := 0) {
   w_diff := width - last_width
   ControlGetPos, CurrentRow_x, , w, , Static3
   WinSet, Region , 0-0 w%width% h%height% R15-15, ahk_id %switcher_id%
-  GuiControl, Move, list, % (hideScrollbars ? "x0" : "x9") . "w" . (hideScrollBars ? width + 20 : width - 20) " h" height - 50
-  GuiControl, Move, Edit1, % "w" width - 160 
+  GuiControl, 1:Move, list, % (hideScrollbars ? "x0" : "x9") . "w" . (hideScrollbars ? width + 20 : width - 20) " h" height - 50
+  GuiControl, 1:Move, Edit1, % "w" width - 160 
   if w_diff
-    GuiControl, Move, CurrentRow, % "x" CurrentRow_x + w_diff
+    GuiControl, 1:Move, CurrentRow, % "x" CurrentRow_x + w_diff
   if (c := GetColumnWidths()) {
-    LV_ModifyCol(3, (width - (c.1 + c.2)) - (hideScrollBars ? 1 : 41))
+    LV_ModifyCol(3, (width - (c.1 + c.2)) - (hideScrollbars ? 1 : 41))
   }
 }
 
@@ -1317,7 +1352,7 @@ class stringsimilarity {
 *                      The function will be called once for each value. It must return a number or string.
 *    reverse:          [optional] Pass true if the result array should be reversed
 */
-objectSort(obj, keyName="", callbackFunc="", reverse=false)
+objectSort(obj, keyName:="", callbackFunc:="", reverse := false)
 {
 	temp := Object()
 	sorted := Object() ;Return value
@@ -1338,7 +1373,7 @@ objectSort(obj, keyName="", callbackFunc="", reverse=false)
 		
 		;Insert the value in the temporary object.
 		;It may happen that some values are equal therefore we put the values in an array.
-		if not isObject(temp[tempKey])
+		if !isObject(temp[tempKey])
 			temp[tempKey] := []
 		temp[tempKey].push(oneValue)
 	}
@@ -1349,14 +1384,70 @@ objectSort(obj, keyName="", callbackFunc="", reverse=false)
 		for oneValueIndex, oneValue in oneValueList
 		{
 			;And add the values to the result list
-			if (reverse)
+			if reverse
 				sorted.insertAt(1,oneValue)
 			else
-				sorted.push(oneValue)
+        sorted.push(oneValue)
 		}
 	}
 	
 	return sorted
+}
+
+ReadOrWriteINI(write := 0, init := 0) {
+  global
+  iniArray := [[ "compact"               ,{"section": "settings"  , label: "Use small listview icons", "default":1}]
+  ,[ "hideScrollbars"        ,{"section": "settings", "vartype": "bool"  , label: "Hide listview scrollbars", "default":1}]
+  ,[ "fadeUi"                ,{"section": "settings", "vartype": "bool"  , label: "Fade effect when showing or hiding UI", "default":1}]
+  ,[ "activateOnlyMatch"     ,{"section": "settings", "vartype": "bool"  , label: "Automatically activate sole match", "default":0}]
+  ,[ "hideWhenFocusLost"     ,{"section": "settings", "vartype": "bool"  , label: "Automatically hide UI when focus is lost", "default":0}]
+  ,[ "refreshEveryKeystroke" ,{"section": "settings", "vartype": "bool"  , label: "Fully refresh listview on every keystroke", "default":0}]
+  ,[ "chromeDebugPort"       ,{"section": "settings", "vartype": "int"   , label: "Debug port for Chrome", "default":9222}]
+  ,[ "vivaldiDebugPort"      ,{"section": "settings", "vartype": "int"   , label: "Debug port for Vivaldi", "default":5000}]
+  ,[ "shortcutFolders"       ,{"section": "settings", "vartype": "string", label: "Filelist folders", "default":"A_StartMenu, A_StartMenuCommon, A_Desktop, A_DesktopCommon"}]
+  ,[ "recurse_limit"         ,{"section": "settings", "vartype": "int"   , label: "Recurse limit", "default":2}]
+  ,[ "fileLimit"             ,{"section": "settings", "vartype": "int"   , label: "File limit", "default":500}]
+  ,[ "fileExtensionList"     ,{"section": "settings", "vartype": "string", label: "Match file ext. (comma separated)", "default":"jpe?g,gif,png,docx?,xls,exe,txt,lnk"}]]
+
+  ; if !IsObject(iniArray) {
+  ;     iniArray := JSON.Load(iniJson)
+  ; }
+  if write {
+      for _, opt in iniArray {
+        key := opt[1]
+        v := opt[2]
+        IniWrite, % %key%, settings.ini, % v.section, % key
+      }
+  } else {
+      for _, opt in iniArray {
+        key := opt[1]
+        v := opt[2]
+        IniRead, %key% , settings.ini, % v.section, % key, % v.default
+      }
+  }
+  if init {
+    for _, opt in iniArray {
+      var := opt[1]
+      o := opt[2]
+      def := o.default
+      label := o.label      
+      optstr := Format("hwndh{1:} v{1:} x10",var) 
+      if (def = 0 || def = 1) {
+        Gui, Settings:Add, Checkbox, % optstr . " w300 Checked" . %var%, % label
+      } else {
+        Gui, Settings:Add, Edit, % optstr . (InStr(var, "Port") ? "Number w50" : "w150"), % %var%
+        Gui, Settings:Add, Text, x+5 yp w150, % label
+      }
+    }
+  }
+}
+
+tooltip(text := "", timeout := 3) { 
+  static func := Func("tooltip").Bind()
+  Tooltip, % text
+  if (text) {
+    SetTimer, % func, % -(timeout * 1000)
+  }
 }
 
 ; by Bentschi from https://www.autohotkey.com/boards/viewtopic.php?t=4372
