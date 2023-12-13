@@ -28,8 +28,6 @@
 
 ; Use small icons in the listview
 ; global compact := true
-; A bit of a hack, but this 'hides' the scroll bars, rather the listview is    
-; sized out of bounds, you'll still be able to use the scroll wheel or arrows
 ; but when resizing the window you can't use the left edge of the window, just
 ; the top and bottom right.
 ; global hideScrollbars := true
@@ -45,7 +43,7 @@
 ;   < - for simularity
 ;     - (blank) for simple search
 ; recommended '*' for fast fuzzy searching; you can set one of the other search modes as default here instead if destired
-global defaultTCSearch := "" 
+global defaultTCSearch := "*" 
 
 ; Activate the window if it's the only match (works best with regex/simularity)
 ; activateOnlyMatch := false
@@ -56,7 +54,7 @@ global defaultTCSearch := ""
 ; Window titles containing any of the listed substrings are filtered out from results
 ; useful for things like  hiding improperly configured tool windows or screen
 ; capture software during demos.
-filters := []
+, filters := []
 ; "NVIDIA GeForce Overlay","HPSystemEventUtilityHost"
 
 ; Add folders containing files or shortcuts you'd like to show in the list.
@@ -101,11 +99,9 @@ filters := []
 global initialLoadComplete := false
 , version := "0.1"
 , ihook
-, browserTabObj
 , switcher_id
 , settings_id
 , compact
-, fileExtensionList 
 , activateOnlyMatch
 , hideScrollbars
 , hideWhenFocusLost
@@ -113,9 +109,10 @@ global initialLoadComplete := false
 , chromeDebugPort
 , vivaldiDebugPort
 , shortcutFolders
+, fileList
+, fileExtensionList 
 , recurse_limit
 , fileLimit
-, regexpMeta := "^$*+?][\|(){}."
 , chromeTabObj := Object()
 , vivaldiTabObj := Object()
 ; , debounced := false
@@ -135,11 +132,11 @@ OnExit("Quit")
 ; Load saved position from settings.ini
 ; IniRead, gui_pos, settings.ini, position, gui_pos, 0
 
-; -- still working on options
 Menu, Context, Add, Options, MenuHandler
 Menu, Context, Add, Exit, MenuHandler
 
 Gui, +LastFound +AlwaysOnTop +ToolWindow -Caption -Resize -DPIScale +Hwndswitcher_id
+; Gui, +E0x02000000 +E0x00080000 ; WS_EX_COMPOSITED & WS_EX_LAYERED => Double Buffer
 Gui, Color, black, 191919
 Gui, Margin, 8, 10
 Gui, Font, s14 cEEE8D5, Segoe MDL2 Assets ; magnifying glass icon
@@ -154,7 +151,7 @@ Gui, Add, ListView, x9 y+12 w490 h500 -Hdr -Multi Count10 vlist hwndHLV gListVie
 
 global settingsXMargin := 4
 Gui, Settings:Margin, % settingsXMargin, 5
-Gui, Settings:+Owner1 +LastFound +AlwaysOnTop -Caption +Hwndsettings_id
+Gui, Settings:+Owner1 +LastFound +AlwaysOnTop -Caption -DPIScale +Hwndsettings_id
 Gui, Settings:Color, black,0x2e2d2d
 Gui, Settings:Font, s8 cEEE8D5 Italic
 Gui, Settings:Add, Text, x10 y5 hwndhsettingsTitle, % "iswitchw v" . version
@@ -166,7 +163,7 @@ Gui, Settings:Add, Button, hwndhsaveSettings gsaveSettings x10, Save
 
 Gui, Show, NoActivate, iswitchw - Window Switcher
 WinWait, ahk_id %switcher_id%, , 1
-WinSet, Transparent, 0, ahk_id %switcher_id%
+; WinSet, Transparent, 0, ahk_id %switcher_id%
 ; if gui_pos
 ;   SetWindowPosition(switcher_id, StrSplit(gui_pos, A_Space)*)
 LV_ModifyCol(4,0)
@@ -201,6 +198,9 @@ OnMessage(0x200, "WM_MOUSEMOVE")
 OnMessage(0x201, "WM_LBUTTONDOWN")
 
 initialLoadComplete := true ; set flag to enable ShowSwitcher hotkey
+
+boundIconRefresh := Func("generateIconList").Bind("", true)
+SetTimer, % boundIconRefresh, % 60000 * 10 ; periodically refresh icon list, every 10 minutes
 Return
 
 #Include lib\Accv2.ahk
@@ -284,9 +284,9 @@ guiContextMenu() {
 }
 
 MenuHandler() {
-  local opt, h, hwnd, controls, optHeight := 20
+  local opt, h, hwnd, controls, optHeight := 40
   Switch A_ThisMenuItem {
-    Case "Options"  :
+    Case "Options": ; display options menu, automatically adjust height (if I add more options)
       ihook.Stop()
       controls := [hsettingsTitle, hsaveSettings]
       for _, opt in iniArray {
@@ -301,7 +301,7 @@ MenuHandler() {
       pos := guiPos(settings_id)
       w := pos.w, h := pos.h
       WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %settings_id% ; rounded corners
-      GuiControl, Settings:Move, settingsGuiClose, % "x" w - 20 
+      GuiControl, Settings:Move, settingsGuiClose, % "x" w - 20 ; move close to right side
       WinSet, Transparent, 225, ahk_id %settings_id%
     Case "Exit"     : ExitApp 
   }
@@ -329,13 +329,13 @@ onKeyDown(ihook, vk, sc) {
     ihook.Start()
     search := ""
   }
+  if !WinExist("ahk_id" switcher_id)
+    ihook.Stop()
   if (correct || clear) {
     ihook.KeyOpt("{all}", "-I")
     callRefresh(search)
   }
   last_key := vk
-  if !WinExist("ahk_id" switcher_id)
-    ihook.Stop()
   OutputDebug, % vk " - " sc "`n"
 }
 
@@ -384,11 +384,10 @@ onEnd(ihook) {
   if ihook.EndReason != "EndKey"
     return
   OutputDebug, % ih.EndKey
+  SetTimer, FadeHide, -1
   if ihook.EndKey == "Enter" {
     ActivateWindow()
   }
-  if WinExist("ahk_id" switcher_id)
-    FadeHide()
 }
 
 clearInput() {
@@ -410,20 +409,17 @@ tooltipOff() {
 ; Capslock to activate (feel free to change if desired)
 ;
 ; #space::
-$CapsLock::
+$CapsLock:: ; TODO: allow rebinding activation bind
 ShowSwitcher() {
-  global
   if !initialLoadComplete
     return
-  Thread, NoTimers
   if !WinExist("ahk_id" switcher_id) {
-    Thread, NoTimers
-    browserTabObj := ParseBrowserWindows()
-    FadeGui("in")
     RefreshWindowList()
+    FadeGui("in")
     ihook.Start()
     If hideWhenFocusLost
       SetTimer, HideTimer, 10
+    Thread, NoTimers
   } else {
     clearInput()
   }
@@ -525,9 +521,9 @@ Quit() {
 ;
 ListViewFunc() {
   global CurrentRow, allRowCount
-  Critical, 50
   if (A_GuiEvent = "A") {
-   ActivateWindow()
+    SetTimer, FadeHide, -1
+    ActivateWindow()
   }
   if (A_GuiEvent = "Normal") {
     LV_Modify(cr, "-Focus")
@@ -571,10 +567,10 @@ GetAllWindows() {
 ; Fetch info on all active windows
 ;
 ParseAllWindows() {
-  global filters 
   windows := Object()
   vivaldi_pushed := false
   chrome_pushed := false
+  browserTabObj := ParseBrowserWindows()
   top := DllCall("GetTopWindow", "Ptr","")
   for _, next in GetAllWindows() {
     WinGetTitle, title, % "ahk_id" next
@@ -645,7 +641,6 @@ findVSCodeTabs(hwnd) {
 */
 
 ParseBrowserWindows() {
-  global chromeDebugPort, vivaldiDebugPort
   chromePortOpen := vivaldiPortOpen := false
   obj := Object()
   list := NetStat()
@@ -681,11 +676,11 @@ ParseBrowserWindows() {
 filterWindows(allwindows, search) {
   static lastResultLen := 0, lastSearch := "", last_windows := []
   start := A_TickCount
-  found := InStr(search, lastSearch)
-  newSearch := ( !found 
-    || !search 
+  found := InStr(search, lastSearch) ; || (StrLen(RegExReplace(search, "^[*<?]", "")) >= 3 && InStr(lastSearch, search))
+  newSearch := ( !found
+    || !search
     || lastResultLen = 0
-    || refreshEveryKeystroke 
+    || refreshEveryKeystroke
     || defaultTCSearch = "?" 
     || SubStr(search, 1, 1) = "?")
   toFilter := newSearch ? allwindows : last_windows
@@ -696,6 +691,7 @@ filterWindows(allwindows, search) {
   lastSearch := search
   result := []
   filterCount := toFilter.Count()
+  minScoreSearchLength := StrLen(search) >= 2
   for i, e in toFilter {
     str := Trim(e.title " " e.procName " " e.url)
     if (SubStr(search, 1, 1) != "?" && defaultTCSearch != "?" ) {
@@ -704,7 +700,7 @@ filterWindows(allwindows, search) {
     }
     match := TCMatch(str, search) 
     if (!search || match) {
-      if (search && filterCount <= 100) { ; only score/sort if there's less than 100 items
+      if (minScoreSearchLength && filterCount <= 100) { ; only score/sort if there's less than 100 items
         score := Format("{:.2f}", stringsimilarity.compareTwoStrings(str, search))
         if e.HasKey("path")
          score -= 0.30, if (score < 0.00) score := 0.00 ; penalize files
@@ -714,8 +710,9 @@ filterWindows(allwindows, search) {
     }
   }
   resultLen := result.Count()
-  if search && resultLen <= 100
-    result := objectSort(result, "score", , true)
+  if minScoreSearchLength && resultLen <= 100 {
+    result := objectSort(result, ["score", "title"], , true)
+  }
   updateSearchStringColour(resultLen, lastResultLen)
   if (resultLen <= 1) {
     ihook.KeyOpt("{all}", "I")
@@ -751,8 +748,10 @@ updateSearchStringColour(len, last_len) {
 }
 
 RefreshWindowList(search := "", removeEntry := "") {
-  global fileList, refreshEveryKeystroke, activateOnlyMatch, allRowCount
+  global allRowCount
   static iconArray := Object(), allwindows
+  if !search
+    updateSearchStringColour(2,2)
   allwindows := ParseAllWindows()
   allwindows.Push(fileList*)
   allRowCount := allwindows.Count()
@@ -770,13 +769,13 @@ RefreshWindowList(search := "", removeEntry := "") {
   for _, o in windows {
     windows_dict[o.id] := o
   }
-  ; OutputDebug, % "Allwindows count: " allwindows.MaxIndex() " | windows count: " windows.MaxIndex() "`n"
   windowLen := windows.Count()
   if (newSearch || iconArray.Count() == 0)
     iconArray := generateIconList(windows)
   if (windowLen > 0) {
     ActivateWindow("", windows_dict) ; update function with current windows list
     if (windowLen = 1 && activateOnlyMatch) {
+      SetTimer, FadeHide, -1
       ActivateWindow(windows[1])
     } else {
       func := Func("DrawListView").Bind(windows, iconArray)
@@ -788,7 +787,6 @@ RefreshWindowList(search := "", removeEntry := "") {
 
 ActivateWindow(rowNum := "", updateWindows := false, closeWindow := false) {
   static windows
-  global vivaldiDebugPort, chromeDebugPort, ihook
   if IsObject(updateWindows) {
     windows := updateWindows
     if (!rowNum)
@@ -806,7 +804,6 @@ ActivateWindow(rowNum := "", updateWindows := false, closeWindow := false) {
   }
   if (!closeWindow) {
     updateSearchStringColour(0,0)
-    FadeHide()
   }
   procName := window.procName
   title := window.title
@@ -835,9 +832,9 @@ ActivateWindow(rowNum := "", updateWindows := false, closeWindow := false) {
     } else {
       WinActivate, ahk_id %id%
     }
-    If (procName = "VSCode tab") {
-      Acc_Get("Object",window.accPath,,"ahk_id" id).accDoDefaultAction(0)
-    }
+    ; If (procName = "VSCode tab") {
+    ;   Acc_Get("Object",window.accPath,,"ahk_id" id).accDoDefaultAction(0)
+    ; }
   }
 }
 
@@ -846,7 +843,7 @@ ActivateWindow(rowNum := "", updateWindows := false, closeWindow := false) {
 ; Add window list to listview
 ;
 DrawListView(windows, iconArray) {
-  Global hlv, compact, allRowCount
+  global
   static max_width := 50 ; set max width for icon/number column, will adjust itself if needed
   , LVM_GETCOLUMNWIDTH := 0x101d
   LV_GetText(selectedRow, LV_GetNext(),3)
@@ -854,8 +851,8 @@ DrawListView(windows, iconArray) {
   LV_Delete()
   row_num := 1
   for i, e in windows {
-    if (i < startFrom)
-      continue
+    ; if (i < startFrom)
+    ;   continue
     if iconArray.HasKey(Format("{:s}",e.id)) {
       icon := iconArray[e.id].icon
       arr := [icon, row_num, e.procName, e.title, e.id]
@@ -863,7 +860,7 @@ DrawListView(windows, iconArray) {
       row_num++
     }
   }
-  LV_Modify(1, "Select")
+  ; LV_Modify(1, "Select")
   ListLines, Off
   loop % LV_GetCount() {
     LV_GetText(r,A_Index,3)
@@ -888,15 +885,15 @@ DrawListView(windows, iconArray) {
   }
 
   LV_ModifyCol(2,110)
-  GuiControl, +Redraw, list
   totalRows := LV_GetCount()
   LV_Modify(1, "Select Vis")
-  Resize()
+  ; Resize()
+  SetTimer, Resize, -1
+  GuiControl, +Redraw, list
 }
 
-; Portions of this from the example in the AutoHotkey help-file
-generateIconList(windows) {
-  global compact
+; heavily modified from original iswitchw
+generateIconList(windows := "", forceRefresh := false) {
   static IconArray := Object()
   , IconHandles := Object()
   , WS_EX_TOOLWINDOW = 0x80
@@ -907,6 +904,14 @@ generateIconList(windows) {
   , ICON_BIG := 1
   , ICON_SMALL2 := 2
   , ICON_SMALL := 0
+  , lastWindows
+
+  if IsObject(windows)
+    lastWindows := windows
+  else if IsObject(lastWindows)
+    windows := lastWindows
+  else
+    return
 
   iconCount = 0
   imageListID := IL_Create(windows.Count(), 1, compact ? 0 : 1)
@@ -921,7 +926,7 @@ generateIconList(windows) {
     iconId := Format("{:s}", window.id)
     ownerHwnd := DllCall("GetWindow", "uint", wid, "uint", GW_OWNER)
     iconNumber := ""
-    if (!IconHandles.HasKey(iconId)) {
+    if (forceRefresh || !IconHandles.HasKey(iconId)) {
         if window.HasKey("path") {
           FileName := window.path
           ; Calculate buffer size required for SHFILEINFO structure.
@@ -1012,17 +1017,18 @@ chromiumFocusTab(debugPort, title, id) {
 }
 
 TCMatch(aHaystack, aNeedle) {
-  ; global defaultTCSearch
   static tcMatch := DllCall("GetProcAddress", "Ptr", DllCall("LoadLibrary", "WStr", "lib\TCMatch" . (A_PtrSize == 8 ? "64" : ""), "Ptr"), "AStr", "MatchFileW","Ptr")
   return DllCall(tcMatch, "WStr", aNeedle, "WStr", aHaystack)
 }
 
 FadeHide() {
-  global ihook
   static func := Func("FadeGui").Bind("out")
   ihook.Stop()
-  WinSet, AlwaysOnTop, Off, ahk_id %switcher_id%
-  SetTimer, % func, -1
+  if WinExist("ahk_id" switcher_id) {
+    WinSet, AlwaysOnTop, Off, ahk_id %switcher_id%
+    SetTimer, % func, -1
+    SetTimer, RefreshWindowList, -1
+  }
 }
 
 FadeGui(in_or_out := "in") {
@@ -1042,8 +1048,10 @@ FadeGui(in_or_out := "in") {
     Gui, Hide
   } else {
     Gui, 1:Show, % "center " . (hideWhenFocusLost ? "" : "NoActivate")
-    WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
+    WinGetPos, , , w, h, ahk_id %switcher_id%
     WinSet, Transparent, % fadeUi ? 0 : max_opacity, ahk_id %switcher_id%
+    WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %switcher_id% ; rounded corners
+    WinSet, AlwaysOnTop, On, ahk_id %switcher_id%
     if fadeUi {
       opacity := 0
       while (opacity < max_opacity) {
@@ -1052,9 +1060,8 @@ FadeGui(in_or_out := "in") {
         Sleep delay
       }
     }
-    WinGetPos, , , w, h, ahk_id %switcher_id%
-    WinSet, Region , 0-0 w%w% h%h% R15-15, ahk_id %switcher_id% ; rounded corners
   }
+  inProgress := false
 }
 
 WM_LBUTTONDOWN() {
@@ -1206,7 +1213,9 @@ Resize(width := "", height := "", last_width := 0) {
   if w_diff
     GuiControl, 1:Move, CurrentRow, % "x" CurrentRow_x + w_diff
   if (c := GetColumnWidths()) {
+    GuiControl, -Redraw, list
     LV_ModifyCol(3, (width - (c.1 + c.2)) - (hideScrollbars ? 1 : 41))
+    GuiControl, +Redraw, list
   }
 }
 
@@ -1356,11 +1365,18 @@ objectSort(obj, keyName:="", callbackFunc:="", reverse := false)
 {
 	temp := Object()
 	sorted := Object() ;Return value
-	
+  if isObject(keyName) {
+    t := keyName[1]
+    keyName.RemoveAt(1)
+    if keyName.Count() > 0
+      remaining := keyName
+    keyName := t
+  }
+
 	for oneKey, oneValue in obj
 	{
 		;Get the value by which it will be sorted
-		if keyname
+		if keyName
 			value := oneValue[keyName]
 		else
 			value := oneValue
@@ -1381,6 +1397,9 @@ objectSort(obj, keyName:="", callbackFunc:="", reverse := false)
 	;Now loop throuth the temporary list. AutoHotkey sorts them for us.
 	for oneTempKey, oneValueList in temp
 	{
+    if remaining
+      oneValueList := objectSort(oneValueList, remaining, callbackFunc, reverse)
+
 		for oneValueIndex, oneValue in oneValueList
 		{
 			;And add the values to the result list
@@ -1390,8 +1409,9 @@ objectSort(obj, keyName:="", callbackFunc:="", reverse := false)
         sorted.push(oneValue)
 		}
 	}
-	
-	return sorted
+
+  return sorted
+	; return remaining ? objectSort(sorted, remaining, callbackFunc) : sorted
 }
 
 ReadOrWriteINI(write := 0, init := 0) {
